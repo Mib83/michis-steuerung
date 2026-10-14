@@ -8,7 +8,7 @@ class Root{
 }
 let Panel;
 const context={console,HTMLElement:class{attachShadow(){this.shadowRoot=new Root()}},customElements:{get:()=>false,define:(_name,cls)=>Panel=cls},setInterval,clearInterval,CustomEvent:class{}};
-vm.createContext(context);vm.runInContext(fs.readFileSync(require('path').join(__dirname,'../custom_components/miner_ventiel_grundwasser_regler/panel.js'),'utf8'),context);
+vm.createContext(context);vm.runInContext(fs.readFileSync(require('path').join(__dirname,'../custom_components/michis_steuerung/panel.js'),'utf8'),context);
 (async()=>{
 const p=new Panel();p.render();
 const settings={lower:43,upper:44,step:.2,pause:15,stale:30,fast_enabled:true,fast_threshold:3,fast_step:.6,fast_immediate:true};

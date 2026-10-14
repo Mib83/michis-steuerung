@@ -8,8 +8,8 @@ import sys
 import time
 import types
 import unittest
-from unittest.mock import patch
-ROOT = Path(__file__).parent.parent / 'custom_components/miner_ventiel_grundwasser_regler'
+from unittest.mock import patch, AsyncMock
+ROOT = Path(__file__).parent.parent / 'custom_components/michis_steuerung'
 def module(name, **attrs):
     m=types.ModuleType(name)
     for k,v in attrs.items():setattr(m,k,v)
@@ -18,6 +18,7 @@ def module(name, **attrs):
 identity=lambda f:f
 module('probatio',Required=lambda x:x)
 module('homeassistant')
+module('homeassistant.config_entries',ConfigEntryDisabler=types.SimpleNamespace(USER='user'))
 module('homeassistant.components')
 callbacks={}
 async def subscribe(hass,topic,receive,qos):
@@ -267,4 +268,57 @@ class Tests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(other.snapshot()['sent_output'],4.3)
         self.assertFalse(other.enabled)
         await other.stop()
+    async def test_legacy_store_is_imported(self):
+        self.entry.data['legacy_entry_id']='legacy123'
+        legacy_store=Store()
+        sources=[dict(x,name='Alter Name '+str(i)) for i,x in enumerate(self.c.sources)]
+        legacy_store.data={'settings':dict(self.c.settings,pause=15),'output':4.8,'sources':sources,'last_sent_output':4.8}
+        await self.c.stop()
+        other=backend.Controller(Hass(),self.entry)
+        with patch.object(backend,'Store',side_effect=lambda hass,version,key: legacy_store if key==backend.LEGACY_DOMAIN+'.legacy123' else Store()):
+            await other.start()
+        await other.save()
+        self.assertEqual(other.sources,sources)
+        self.assertEqual(other.output,4.8)
+        self.assertEqual(other.snapshot()['sent_output'],4.8)
+        self.assertFalse(other.enabled)
+        self.assertEqual(other.store.data['sources'],sources)
+        self.assertEqual(len(self.sent),0)
+        await other.stop()
+    async def test_new_store_takes_precedence_over_legacy(self):
+        self.entry.data['legacy_entry_id']='legacy123'
+        await self.c.stop()
+        other=backend.Controller(Hass(),self.entry)
+        other.store.data={'settings':dict(self.c.settings,pause=20),'output':5.2}
+        with patch.object(backend,'Store',side_effect=AssertionError('Alte Daten dürfen nicht erneut importiert werden')):
+            await other.start()
+        self.assertEqual(other.output,5.2)
+        self.assertEqual(other.settings['pause'],20)
+        await other.stop()
+    async def test_migration_aborts_if_old_controller_cannot_stop(self):
+        self.entry.data['legacy_entry_id']='legacy123'
+        hass=Hass()
+        hass.config_entries=types.SimpleNamespace(async_get_entry=lambda key:types.SimpleNamespace(entry_id=key,domain=backend.LEGACY_DOMAIN,disabled_by=None),async_set_disabled_by=AsyncMock(return_value=False))
+        with self.assertRaises(RuntimeError):await backend.async_setup_entry(hass,self.entry)
+        hass.config_entries.async_set_disabled_by.assert_awaited_once_with('legacy123','user')
+    async def test_config_flow_offers_legacy_import(self):
+        class FlowBase:
+            def __init_subclass__(cls, **kwargs):pass
+            def _async_current_entries(self):return []
+            def async_show_form(self, **kwargs):return kwargs
+            def async_create_entry(self, **kwargs):return kwargs
+        sys.modules['homeassistant.config_entries'].ConfigFlow=FlowBase
+        sys.modules['probatio'].Schema=lambda data:data
+        module('homeassistant.helpers.selector')
+        spec=importlib.util.spec_from_file_location(package+'.config_flow',ROOT/'config_flow.py')
+        flow_module=importlib.util.module_from_spec(spec);spec.loader.exec_module(flow_module)
+        flow=flow_module.ConfigFlow()
+        legacy=types.SimpleNamespace(entry_id='old123',data=self.entry.data)
+        flow.hass=types.SimpleNamespace(config_entries=types.SimpleNamespace(async_entries=lambda domain:[legacy] if domain==backend.LEGACY_DOMAIN else []))
+        form=await flow.async_step_user()
+        self.assertEqual(form['step_id'],'legacy')
+        result=await flow.async_step_legacy({})
+        self.assertEqual(result['data']['legacy_entry_id'],'old123')
+        self.assertEqual(result['data']['host'],self.entry.data['host'])
+        self.assertEqual(result['title'],'Michi´s Steuerung')
 if __name__=='__main__':unittest.main(verbosity=2)
