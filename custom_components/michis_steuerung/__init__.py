@@ -6,6 +6,7 @@ from datetime import timedelta
 from pathlib import Path
 import socket
 import time
+import uuid
 
 import probatio as vol
 from homeassistant.components import mqtt, panel_custom, frontend, websocket_api
@@ -38,6 +39,7 @@ class Controller:
         self.store = Store(hass, 1, f'{DOMAIN}.{entry.entry_id}')
         self.unsubscribers = []
         self.mqtt_unsubscribers = []
+        self.fans = {}
         self.sources = [{'name': miner.upper().replace('_', '-'),
             'base': f"{entry.data['prefix']}/{miner}",
             'labels': [f'Slot {i}' for i in range(4)]}
@@ -64,6 +66,19 @@ class Controller:
                 self.sources = validate_sources(saved['sources'])
             except (ValueError, TypeError):
                 pass
+        from .fan import FanController
+        for item in (saved or {}).get('fans', []):
+            try:
+                fan_id = item['id']
+                if not isinstance(fan_id, str) or not fan_id or fan_id in self.fans:
+                    raise ValueError('Ungültige Lüfter-ID')
+                fan = FanController(self, fan_id, item['config'], item)
+                self.validate_fan_target(fan.config, fan_id)
+                self.fans[fan_id] = fan
+                await fan.start()
+            except (ValueError, KeyError, TypeError):
+                # Preserve invalid stored definitions until the user repairs them.
+                raise ValueError('Gespeicherter Lüfter konnte nicht geladen werden') from None
         # Every startup deliberately requires manual enable; no startup UDP output.
         self.enabled = False
         await self.subscribe_sources(self.sources)
@@ -134,14 +149,43 @@ class Controller:
             status = 'Kühlung reduzieren' if self.output > 0 else 'Untergrenze 0 V erreicht'
         else:
             status = 'Temperatur im gewünschten Bereich'
-        return {'fast_pending': self.pending_jump is not None, 'last_fast_event': self.last_fast_event, 'sources': self.sources, 'settings': self.settings, 'output': self.output, 'enabled': self.enabled,
+        return {'fans': [fan.snapshot() for fan in self.fans.values()], 'fast_pending': self.pending_jump is not None, 'last_fast_event': self.last_fast_event, 'sources': self.sources, 'settings': self.settings, 'output': self.output, 'enabled': self.enabled,
             'miners': miners, 'maximum': maximum, 'ready': ready, 'valid_count': len(valid),
             'remaining': round(remaining,1), 'status': status,
             'last_message': self.last_message, 'sent_output': self.last_sent_output, 'last_error': self.last_error,
             'history': list(self.history), 'target': f"{self.entry.data['host']}:{self.entry.data['port']}", 'version': VERSION}
 
     async def save(self):
-        await self.store.async_save({'settings': self.settings, 'output': self.output, 'last_sent_output': self.last_sent_output, 'sources': self.sources})
+        await self.store.async_save({'settings': self.settings, 'output': self.output, 'last_sent_output': self.last_sent_output, 'sources': self.sources, 'fans': [fan.serialized() for fan in self.fans.values()]})
+
+    def output_limits(self):
+        return 0, 10
+
+    def validate_fan_target(self, config, fan_id=None):
+        target = (config['host'], config['port'], config['command'])
+        if target == (self.entry.data['host'], self.entry.data['port'], self.entry.data['command']):
+            raise ValueError('Lüfter benötigt einen eigenen UDP-Befehlsnamen')
+        for other_id, fan in self.fans.items():
+            if other_id != fan_id and target == (fan.config['host'], fan.config['port'], fan.config['command']):
+                raise ValueError('Dieses UDP-Ziel mit Befehlsname wird bereits von einem Lüfter verwendet')
+
+    async def fan_action(self, action, value):
+        from .fan import FanController
+        if action == 'fan_add':
+            async with self.lock:
+                if len(self.fans) >= 20:
+                    raise ValueError('Maximal 20 Lüfter möglich')
+                fan_id = uuid.uuid4().hex
+                fan = FanController(self, fan_id, value)
+                self.validate_fan_target(fan.config)
+                self.fans[fan_id] = fan
+                await fan.start()
+                await self.save()
+        else:
+            if not isinstance(value, dict) or value.get('id') not in self.fans:
+                raise ValueError('Lüfter nicht gefunden')
+            await self.fans[value['id']].command(value.get('action'), value.get('value'))
+        return self.snapshot()
 
     async def send(self, value):
         value = finite(value)
@@ -208,15 +252,16 @@ class Controller:
             # must respect a full normal pause after the previous fast step.
             fast_allowed = pending and (self.settings['fast_immediate'] or state['remaining'] <= 0)
             fast_allowed = fast_allowed and (self.last_fast is None or now-self.last_fast >= self.settings['pause'])
+            minimum, maximum = self.output_limits()
             if self.enabled and state['ready']:
                 fast = bool(fast_allowed)
                 if fast:
-                    value = round(min(10, self.output+self.settings['fast_step']), 1)
+                    value = round(min(maximum, self.output+self.settings['fast_step']), 1)
                     self.pending_jump = None
                 elif pending:
                     value = self.output
                 elif state['remaining'] <= 0:
-                    value = next_output(state['maximum'], self.output, self.settings)
+                    value = max(minimum, min(maximum, next_output(state['maximum'], self.output, self.settings)))
                 else:
                     value = self.output
                 if value != self.output:
@@ -236,6 +281,8 @@ class Controller:
                 self.last_history = time.monotonic()
 
     async def command(self, action, value):
+        if action in ('fan_add', 'fan_command'):
+            return await self.fan_action(action, value)
         async with self.lock:
             if action == 'settings':
                 self.settings = validate_settings(value)
@@ -256,7 +303,7 @@ class Controller:
                     raise ValueError('Schalterwert ungültig')
                 if value:
                     if not self.snapshot()['ready']:
-                        raise ValueError('Alle 16 frischen Temperaturen erforderlich')
+                        raise ValueError('Frische, gültige Temperaturwerte erforderlich')
                     # Synchronize selected start voltage before starting regulation.
                     await self.send(self.output)
                 self.enabled = value
@@ -273,6 +320,8 @@ class Controller:
         return self.snapshot()
 
     async def stop(self):
+        for fan in self.fans.values():
+            await fan.stop()
         self.enabled = False
         for unsubscribe in self.unsubscribers + self.mqtt_unsubscribers:
             unsubscribe()
@@ -312,8 +361,10 @@ async def async_setup(hass, config):
     hass.data.setdefault(DOMAIN, {})
     websocket_api.async_register_command(hass, ws_state)
     websocket_api.async_register_command(hass, ws_command)
-    await hass.http.async_register_static_paths([StaticPathConfig(
-        f'/{DOMAIN}/panel.js', str(Path(__file__).parent / 'panel.js'), False)])
+    await hass.http.async_register_static_paths([
+        StaticPathConfig(f'/{DOMAIN}/panel.js', str(Path(__file__).parent / 'panel.js'), False),
+        StaticPathConfig(f'/{DOMAIN}/fan-panel.js', str(Path(__file__).parent / 'fan-panel.js'), False),
+        StaticPathConfig(f'/{DOMAIN}/brand', str(Path(__file__).parent / 'brand'), True)])
     return True
 
 async def async_setup_entry(hass, entry):
@@ -331,7 +382,7 @@ async def async_setup_entry(hass, entry):
         await controller.start()
         await controller.save()
         await panel_custom.async_register_panel(hass,
-            frontend_url_path=DOMAIN, webcomponent_name='miner-groundwater-panel',
+            frontend_url_path=DOMAIN, webcomponent_name='michis-steuerung-panel-020b1',
             sidebar_title=NAME, sidebar_icon='mdi:coolant-temperature',
             module_url=f'/{DOMAIN}/panel.js?v={UI_BUILD}', require_admin=True)
     except Exception:
