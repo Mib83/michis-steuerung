@@ -320,5 +320,5 @@ class Tests(unittest.IsolatedAsyncioTestCase):
         result=await flow.async_step_legacy({})
         self.assertEqual(result['data']['legacy_entry_id'],'old123')
         self.assertEqual(result['data']['host'],self.entry.data['host'])
-        self.assertEqual(result['title'],'Michi´s Steuerung')
+        self.assertEqual(result['title'],'Miner Ventiel Grundwasser Regler')
 if __name__=='__main__':unittest.main(verbosity=2)
