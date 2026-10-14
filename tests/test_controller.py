@@ -321,4 +321,91 @@ class Tests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result['data']['legacy_entry_id'],'old123')
         self.assertEqual(result['data']['host'],self.entry.data['host'])
         self.assertEqual(result['title'],'Miner Ventiel Grundwasser Regler')
+
+class FanTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        from controller_under_test.fan import FanController
+        self.parent = backend.Controller(Hass(), types.SimpleNamespace(entry_id='test', data={'host':'127.0.0.1','port':7000,'miners':[],'prefix':'miners','command':'Miner:'}))
+        self.config={'name':'0-10V Lüftersteuerung Loxone','sensor_host':'127.0.0.2','sensor_port':502,'unit':1,'host':'127.0.0.1','port':7000,'command':'Fan:','minimum':2,'maximum':10,'off_mode':'minimum'}
+        self.f=FanController(self.parent,'fan1',self.config)
+        self.parent.fans['fan1']=self.f
+        self.sent=[]
+        self.patch=patch.object(backend.socket,'socket')
+        mock=self.patch.start();mock.return_value.__enter__.return_value.sendto.side_effect=lambda payload,target:self.sent.append((payload,target))
+    async def asyncTearDown(self):
+        self.patch.stop()
+    def measured(self,temp):
+        self.f.measurement=(temp,50,time.monotonic())
+    async def test_minimum_sent_once_and_120_second_pause(self):
+        self.measured(30)
+        await self.f.command('enable',True)
+        self.assertEqual(self.sent[0][0],b'Fan:2.0')
+        await self.f.tick(None)
+        self.assertEqual(len(self.sent),1)
+        self.f.last_sent=time.monotonic()-121
+        await self.f.tick(None)
+        self.assertEqual(self.sent[-1][0],b'Fan:2.2')
+    async def test_minimum_not_repeated_when_cold(self):
+        self.measured(26);await self.f.command('enable',True)
+        self.f.last_sent=time.monotonic()-121
+        for _ in range(3):await self.f.tick(None)
+        self.assertEqual(len(self.sent),1);self.assertEqual(self.f.output,2)
+    async def test_independent_fans_and_settings_restored(self):
+        from controller_under_test.fan import FanController
+        self.f.output=3.2;await self.f.save()
+        saved=self.parent.store.data['fans'][0]
+        restored=FanController(self.parent,'fan1',saved['config'],saved)
+        self.assertEqual(restored.output,3.2);self.assertEqual(restored.settings['pause'],120)
+        self.assertFalse(restored.enabled);self.assertEqual(self.parent.output,4)
+    async def test_off_minimum_hold_and_zero(self):
+        for mode,expected in [('minimum',2),('hold',4),('zero',0)]:
+            self.f.config['off_mode']=mode;self.f.output=4;self.f.last_sent_output=4;self.f.enabled=True
+            await self.f.command('enable',False)
+            self.assertEqual(self.f.output,expected);self.assertFalse(self.f.enabled)
+        count=len(self.sent);await self.f.command('enable',False);self.assertEqual(len(self.sent),count)
+    async def test_sensor_failure_holds_and_invalidates(self):
+        from controller_under_test import fan
+        self.measured(30);self.f.enabled=True
+        with patch.object(fan,'read_climate',new=AsyncMock(side_effect=ValueError('ungültig'))):await self.f.poll(None)
+        await self.f.tick(None)
+        self.assertFalse(self.f.snapshot()['ready']);self.assertEqual(self.sent,[])
+    async def test_fast_jump_clamps_to_configured_maximum(self):
+        self.f.config['maximum']=3;self.measured(28);await self.f.command('enable',True)
+        self.f.output=2.8;self.measured(32);await self.f.tick(None)
+        self.assertEqual(self.sent[-1][0],b'Fan:3.0')
+        await self.f.tick(None);self.assertEqual(len(self.sent),2)
+    async def test_config_validation_is_atomic_and_target_unique(self):
+        with self.assertRaises(ValueError):await self.f.command('configure',{'config':dict(self.config,minimum=9,maximum=2),'settings':self.f.settings})
+        self.assertEqual(self.f.config['minimum'],2)
+        with self.assertRaises(ValueError):self.parent.validate_fan_target(dict(self.config,command='Miner:'))
+    async def test_settings_can_change_while_auto_on(self):
+        self.measured(28);await self.f.command('enable',True)
+        await self.f.command('configure',{'config':self.config,'settings':dict(self.f.settings,pause=150)})
+        self.assertEqual(self.f.settings['pause'],150);self.assertTrue(self.f.enabled)
+    async def test_manual_cannot_bypass_minimum(self):
+        with self.assertRaises(ValueError):await self.f.command('manual',1)
+        self.assertEqual(self.sent,[])
+
+class ModbusTests(unittest.IsolatedAsyncioTestCase):
+    async def test_signed_temperature_and_invalid_registers(self):
+        from controller_under_test.modbus import decode_measurements
+        self.assertEqual(decode_measurements((65036,5000,3)),(-5,50))
+        for registers in [(32768,5000,3),(2800,65535,3),(2800,5000,0),(9000,5000,3)]:
+            with self.assertRaises(ValueError):decode_measurements(registers)
+    async def exchange(self, reply):
+        from controller_under_test import modbus
+        reader=asyncio.StreamReader();reader.feed_data(reply);reader.feed_eof()
+        writer=types.SimpleNamespace(write=lambda data:setattr(self,'request',data),drain=AsyncMock(),close=lambda:None,wait_closed=AsyncMock())
+        with patch.object(modbus.asyncio,'open_connection',new=AsyncMock(return_value=(reader,writer))):
+            return await modbus.read_climate('127.0.0.1')
+    async def test_read_three_holding_registers_in_one_request(self):
+        import struct
+        reply=struct.pack('>HHHBBBHHH',1,0,9,1,3,6,2750,5000,3)
+        self.assertEqual(await self.exchange(reply),(27.5,50))
+        self.assertEqual(self.request,bytes.fromhex('000100000006010300000003'))
+    async def test_wrong_transaction_exception_and_truncated_reply(self):
+        import struct
+        for reply in [struct.pack('>HHHBBB',2,0,3,1,0x83,2),struct.pack('>HHHBBB',1,0,3,1,0x83,2),b'\0']:
+            with self.assertRaises((ValueError,asyncio.IncompleteReadError)):await self.exchange(reply)
+
 if __name__=='__main__':unittest.main(verbosity=2)

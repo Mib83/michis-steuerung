@@ -8,7 +8,7 @@ class Root{
 }
 let Panel;
 const context={console,HTMLElement:class{attachShadow(){this.shadowRoot=new Root()}},customElements:{get:()=>false,define:(_name,cls)=>Panel=cls},setInterval,clearInterval,CustomEvent:class{}};
-vm.createContext(context);vm.runInContext(fs.readFileSync(require('path').join(__dirname,'../custom_components/michis_steuerung/panel.js'),'utf8'),context);
+vm.createContext(context);vm.runInContext(fs.readFileSync('custom_components/michis_steuerung/panel.js','utf8').replace(/^import .*\n/,''),context);
 (async()=>{
 const p=new Panel();p.render();
 const settings={lower:43,upper:44,step:.2,pause:15,stale:30,fast_enabled:true,fast_threshold:3,fast_step:.6,fast_immediate:true};
@@ -38,6 +38,6 @@ p.shadowRoot.getElementById('auto_compact').onchange();await new Promise(r=>setT
 assert.equal(sent.action,'enable');assert.strictEqual(sent.value,true);
 assert.equal(p.shadowRoot.getElementById('auto_compact').checked,true);
 assert.equal(p.shadowRoot.getElementById('regler-body').hidden,true);
-
+fs.writeFileSync('/tmp/michis-steuerung-rendered-markup.html',p.shadowRoot.html);
 console.log('UI behavior OK: fields, checkbox values, unsaved edits, settings command. Fold, compact readings, switch and unsaved settings OK. Visual rendering not tested.');
 })().catch(e=>{console.error(e);process.exit(1)});
