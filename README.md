@@ -81,3 +81,20 @@ Ab 0.1.1 heißen Integrationsordner, Domain und Bedienseitenpfad **michis_steuer
 6. Erst nach erfolgreicher Prüfung kann die alte deaktivierte Integration entfernt und ihr alter Ordner gelöscht werden. Die importierten Einstellungen sind dann separat unter der neuen Domain gespeichert.
 
 Nicht beide Regler gleichzeitig einschalten. Die Übernahme ist lokal mit simulierten HA-Schnittstellen getestet; ein vollständiger Installationstest dieser Domain-Umstellung in HA steht noch aus.
+
+
+## V0.2-Beta1: zusätzliche Lüfter
+
+Die Beta ergänzt frei benennbare Lüfter unter **Michi´s Steuerung → Lüfter hinzufügen**. ESP32-IP, Loxone-IP, UDP-Port und einen eigenen Befehlsnamen eingeben, z. B. `Luefter:`. In Loxone muss der dazu passende virtuelle UDP-Eingang angelegt und mit dem Lüfterausgang verbunden werden. Mehr Spannung bedeutet mehr Kühlung.
+
+Standardwerte: 27–28 °C, mindestens 2 V, höchstens 10 V, normale Schrittweite 0,2 V, Wartezeit 120 Sekunden. Unter **Einstellungen & Verbindung** sind Name, Grenzen, Wartezeit, Schnellreaktion und Verbindungen anpassbar. Verbindung und Spannungsgrenzen nur bei ausgeschalteter Automatik ändern; reine Reglerwerte können im Betrieb angepasst werden.
+
+ESP32 DHT22 Klima: Modbus aktivieren. TCP-Port 502, Geräteadresse 1, Funktion 3, Registeradresse 0 Temperatur signed int16 /100, 1 Feuchte /100, 2 Gültigkeit. Alle drei Register werden zusammen alle 5 Sekunden gelesen. Ungültige Werte und Fehlerkennungen führen zum Halten des Stellwerts. Längere Verbindungsfehler werden angezeigt. Mindestspannung wird beim Aktivieren einmal gesendet; unveränderte Werte werden nicht periodisch wiederholt. UDP kann den Empfang durch Loxone nicht bestätigen.
+
+**Bei Automatik aus** ist einstellbar: Mindestspannung senden (Standard), letzten Stellwert halten oder ausdrücklich 0 V senden. Ein Neustart sendet nichts und startet alle Automatiken ausgeschaltet. Nach Update/Neustart bitte benötigte Automatiken bewusst wieder aktivieren.
+
+### Beta installieren
+
+In HACS die Integration öffnen, im Drei-Punkte-Menü Informationen aktualisieren und **Erneut herunterladen** wählen. Falls nötig **Andere Version benötigt? / Need a different version?** öffnen und die Beta im Versionsfeld auswählen. Für automatische Beta-Updates kann der HACS-Schalter **Pre-release** für dieses Repository aktiviert werden. Version **v0.2-Beta1** auswählen, herunterladen und Home Assistant neu starten. Danach bei Bedarf den Browser mit ⌘+Umschalt+R neu laden. Die stabile Version v0.1.2 bleibt als normale Version verfügbar.
+
+Die Beta ist mit 50 automatisierten Prüfungen und einer Browser-Vorschau mit simulierten Messwerten geprüft. Ein Test in einer echten Home-Assistant-Installation und mit dem ESP32/Loxone wurde hier nicht durchgeführt.
