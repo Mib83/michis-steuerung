@@ -1,0 +1,348 @@
+"""MQTT-fed controller and authenticated custom UI for HA 2026.10."""
+import asyncio
+from homeassistant.config_entries import ConfigEntryDisabler
+from collections import deque
+from datetime import timedelta
+from pathlib import Path
+import socket
+import time
+
+import probatio as vol
+from homeassistant.components import mqtt, panel_custom, frontend, websocket_api
+from homeassistant.components.http import StaticPathConfig
+from homeassistant.core import callback
+from homeassistant.helpers.event import async_track_time_interval
+from homeassistant.helpers.storage import Store
+from .const import DEFAULTS, DOMAIN, NAME, VERSION, UI_BUILD, LEGACY_DOMAIN
+from .engine import finite, next_output, validate_settings, validate_sources
+
+class Controller:
+    def __init__(self, hass, entry):
+        self.hass, self.entry = hass, entry
+        self.settings = dict(DEFAULTS)
+        self.output = 4.0
+        self.enabled = False
+        self.samples = {}
+        self.history = deque(maxlen=720)
+        self.last_sent = None
+        self.last_message = None
+        self.last_sent_output = None
+        self.last_error = None
+        self.last_history = 0
+        self.previous_temperature = None
+        self.previous_revision = None
+        self.pending_jump = None
+        self.last_fast = None
+        self.last_fast_event = None
+        self.lock = asyncio.Lock()
+        self.store = Store(hass, 1, f'{DOMAIN}.{entry.entry_id}')
+        self.unsubscribers = []
+        self.mqtt_unsubscribers = []
+        self.sources = [{'name': miner.upper().replace('_', '-'),
+            'base': f"{entry.data['prefix']}/{miner}",
+            'labels': [f'Slot {i}' for i in range(4)]}
+            for miner in entry.data['miners']]
+
+    async def start(self):
+        saved = await self.store.async_load()
+        if saved is None and self.entry.data.get('legacy_entry_id'):
+            legacy_store = Store(self.hass, 1, f"{LEGACY_DOMAIN}.{self.entry.data['legacy_entry_id']}")
+            saved = await legacy_store.async_load()
+        if saved:
+            try:
+                self.settings = validate_settings(saved['settings'])
+                output = finite(saved['output'])
+                if 0 <= output <= 10:
+                    self.output = output
+                previous_sent = saved.get('last_sent_output')
+                if previous_sent is not None and 0 <= finite(previous_sent) <= 10:
+                    self.last_sent_output = finite(previous_sent)
+            except (ValueError, KeyError, TypeError):
+                pass
+        if saved and 'sources' in saved:
+            try:
+                self.sources = validate_sources(saved['sources'])
+            except (ValueError, TypeError):
+                pass
+        # Every startup deliberately requires manual enable; no startup UDP output.
+        self.enabled = False
+        await self.subscribe_sources(self.sources)
+        self.unsubscribers.append(async_track_time_interval(self.hass, self.tick, timedelta(seconds=1)))
+        async def shutdown(_event):
+            await self.stop()
+        self.unsubscribers.append(self.hass.bus.async_listen_once('homeassistant_stop', shutdown))
+
+    async def subscribe_sources(self, sources):
+        new_unsubscribers = []
+        try:
+            for source in sources:
+                for key in ('ths', 'sm0', 'sm1', 'sm2', 'sm3'):
+                    topic = f"{source['base']}/{key}/state"
+                    @callback
+                    def receive(message, topic=topic, key=key):
+                        if message.retain:
+                            return
+                        try:
+                            value = finite(message.payload)
+                        except (ValueError, TypeError):
+                            self.samples.pop(topic, None)
+                            return
+                        if value < 0 or (key != 'ths' and value > 200):
+                            self.samples.pop(topic, None)
+                            return
+                        self.samples[topic] = (value, time.monotonic())
+                    new_unsubscribers.append(await mqtt.async_subscribe(self.hass, topic, receive, 1))
+        except Exception:
+            for unsubscribe in new_unsubscribers:
+                unsubscribe()
+            raise
+        for unsubscribe in self.mqtt_unsubscribers:
+            unsubscribe()
+        self.mqtt_unsubscribers = new_unsubscribers
+        self.samples.clear()
+        self.reset_jump_detection()
+
+    def snapshot(self):
+        now = time.monotonic()
+        miners, valid = [], []
+        for source in self.sources:
+            temps = []
+            for key in ('sm0', 'sm1', 'sm2', 'sm3', 'ths'):
+                sample = self.samples.get(f"{source['base']}/{key}/state")
+                value = sample[0] if sample and now-sample[1] <= self.settings['stale'] else None
+                if key == 'ths':
+                    ths = value
+                else:
+                    temps.append(value)
+                    if value is not None:
+                        valid.append(value)
+            miners.append({'name': source['name'], 'labels': source['labels'], 'temperatures': temps, 'ths': ths})
+        ready = len(valid) == 16
+        maximum = max(valid) if valid else None
+        remaining = max(0, self.settings['pause'] - (now-self.last_sent)) if self.last_sent is not None else 0
+        if self.last_error:
+            status = 'UDP-Sendefehler · Automatik aus'
+        elif not ready:
+            status = 'Messwerte fehlen · Stellwert wird gehalten'
+        elif not self.enabled:
+            status = 'Manuell · Automatik aus'
+        elif remaining > 0:
+            status = 'Wartezeit nach Stellwertänderung'
+        elif maximum > self.settings['upper']:
+            status = 'Mehr Kühlung erforderlich' if self.output < 10 else 'Obergrenze 10 V erreicht'
+        elif maximum < self.settings['lower']:
+            status = 'Kühlung reduzieren' if self.output > 0 else 'Untergrenze 0 V erreicht'
+        else:
+            status = 'Temperatur im gewünschten Bereich'
+        return {'fast_pending': self.pending_jump is not None, 'last_fast_event': self.last_fast_event, 'sources': self.sources, 'settings': self.settings, 'output': self.output, 'enabled': self.enabled,
+            'miners': miners, 'maximum': maximum, 'ready': ready, 'valid_count': len(valid),
+            'remaining': round(remaining,1), 'status': status,
+            'last_message': self.last_message, 'sent_output': self.last_sent_output, 'last_error': self.last_error,
+            'history': list(self.history), 'target': f"{self.entry.data['host']}:{self.entry.data['port']}", 'version': VERSION}
+
+    async def save(self):
+        await self.store.async_save({'settings': self.settings, 'output': self.output, 'last_sent_output': self.last_sent_output, 'sources': self.sources})
+
+    async def send(self, value):
+        value = finite(value)
+        if not 0 <= value <= 10:
+            raise ValueError('Stellwert muss zwischen 0 und 10 V liegen')
+        message = f"{self.entry.data['command']}{value:.1f}"
+        def transmit():
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+                sock.sendto(message.encode('utf-8'), (self.entry.data['host'], self.entry.data['port']))
+        try:
+            await self.hass.async_add_executor_job(transmit)
+        except OSError as err:
+            self.last_error = str(err)
+            self.enabled = False
+            raise ValueError(f'UDP konnte nicht gesendet werden: {err}') from err
+        self.output = round(value,1)
+        self.last_message = message
+        self.last_sent_output = self.output
+        self.last_sent = time.monotonic()
+        self.last_error = None
+        await self.save()
+
+    def temperature_revision(self):
+        return tuple(self.samples.get(f"{source['base']}/sm{i}/state", (None, None))[1]
+            for source in self.sources for i in range(4))
+
+    def reset_jump_detection(self):
+        self.previous_temperature = None
+        self.previous_revision = None
+        self.pending_jump = None
+
+    def detect_jump(self, state):
+        if not self.enabled or not state['ready']:
+            self.reset_jump_detection()
+            return
+        revision = self.temperature_revision()
+        if revision == self.previous_revision:
+            return
+        current = state['maximum']
+        if (self.settings['fast_enabled'] and self.previous_temperature is not None
+            and current - self.previous_temperature >= self.settings['fast_threshold']
+            and current > self.settings['upper']):
+            # Consume each measured change once; collapse further pending jumps.
+            if self.pending_jump is None:
+                self.pending_jump = {'baseline': self.previous_temperature,
+                    'delta': round(current-self.previous_temperature, 2),
+                    'created': time.monotonic()}
+        self.previous_temperature = current
+        self.previous_revision = revision
+
+    async def tick(self, _now):
+        async with self.lock:
+            state = self.snapshot()
+            self.detect_jump(state)
+            now = time.monotonic()
+            pending = self.pending_jump
+            if pending and (not self.settings['fast_enabled']
+                or state['maximum'] is None
+                or state['maximum'] <= self.settings['upper']
+                or state['maximum']-pending['baseline'] < self.settings['fast_threshold']
+                or now-pending['created'] > self.settings['stale']):
+                self.pending_jump = pending = None
+            # A fast step may bypass the normal pause once. Further fast steps
+            # must respect a full normal pause after the previous fast step.
+            fast_allowed = pending and (self.settings['fast_immediate'] or state['remaining'] <= 0)
+            fast_allowed = fast_allowed and (self.last_fast is None or now-self.last_fast >= self.settings['pause'])
+            if self.enabled and state['ready']:
+                fast = bool(fast_allowed)
+                if fast:
+                    value = round(min(10, self.output+self.settings['fast_step']), 1)
+                    self.pending_jump = None
+                elif pending:
+                    value = self.output
+                elif state['remaining'] <= 0:
+                    value = next_output(state['maximum'], self.output, self.settings)
+                else:
+                    value = self.output
+                if value != self.output:
+                    previous_output = self.output
+                    try:
+                        await self.send(value)
+                    except ValueError:
+                        pass
+                    else:
+                        if fast:
+                            self.last_fast = self.last_sent
+                            self.last_fast_event = {'time': time.time(), 'jump': pending['delta'],
+                                'change': round(value-previous_output, 1)}
+            if time.monotonic()-self.last_history >= 5:
+                state = self.snapshot()
+                self.history.append({'t': time.time(), 'temperature': state['maximum'] if state['ready'] else None, 'output': self.output})
+                self.last_history = time.monotonic()
+
+    async def command(self, action, value):
+        async with self.lock:
+            if action == 'settings':
+                self.settings = validate_settings(value)
+                self.reset_jump_detection()
+                await self.save()
+            elif action == 'sources':
+                if self.enabled:
+                    raise ValueError('Vor dem Ändern der Messquellen die Automatik ausschalten')
+                sources = validate_sources(value)
+                if sources != self.sources:
+                    if [x['base'] for x in sources] != [x['base'] for x in self.sources]:
+                        await self.subscribe_sources(sources)
+                        self.history.clear()
+                    self.sources = sources
+                    await self.save()
+            elif action == 'enable':
+                if not isinstance(value, bool):
+                    raise ValueError('Schalterwert ungültig')
+                if value:
+                    if not self.snapshot()['ready']:
+                        raise ValueError('Alle 16 frischen Temperaturen erforderlich')
+                    # Synchronize selected start voltage before starting regulation.
+                    await self.send(self.output)
+                self.enabled = value
+                self.reset_jump_detection()
+                if value:
+                    self.previous_temperature = self.snapshot()['maximum']
+                    self.previous_revision = self.temperature_revision()
+            elif action == 'manual':
+                if self.enabled:
+                    raise ValueError('Zuerst die Automatik ausschalten')
+                await self.send(value)
+            else:
+                raise ValueError('Unbekannte Aktion')
+        return self.snapshot()
+
+    async def stop(self):
+        self.enabled = False
+        for unsubscribe in self.unsubscribers + self.mqtt_unsubscribers:
+            unsubscribe()
+        self.unsubscribers.clear()
+        self.mqtt_unsubscribers.clear()
+        # Wait for an already running send to finish before unloading.
+        async with self.lock:
+            self.enabled = False
+            await self.save()
+
+@websocket_api.websocket_command({'type': f'{DOMAIN}/state'})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_state(hass, connection, msg):
+    controller = hass.data[DOMAIN].get('controller')
+    if controller is None:
+        connection.send_error(msg['id'], 'not_ready', 'Integration noch nicht eingerichtet')
+        return
+    connection.send_result(msg['id'], controller.snapshot())
+
+@websocket_api.websocket_command({'type': f'{DOMAIN}/command', vol.Required('action'): str, vol.Required('value'): object})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_command(hass, connection, msg):
+    controller = hass.data[DOMAIN].get('controller')
+    if controller is None:
+        connection.send_error(msg['id'], 'not_ready', 'Integration noch nicht eingerichtet')
+        return
+    try:
+        result = await controller.command(msg['action'], msg['value'])
+    except (ValueError, TypeError) as err:
+        connection.send_error(msg['id'], 'invalid_value', str(err))
+        return
+    connection.send_result(msg['id'], result)
+
+async def async_setup(hass, config):
+    hass.data.setdefault(DOMAIN, {})
+    websocket_api.async_register_command(hass, ws_state)
+    websocket_api.async_register_command(hass, ws_command)
+    await hass.http.async_register_static_paths([StaticPathConfig(
+        f'/{DOMAIN}/panel.js', str(Path(__file__).parent / 'panel.js'), False)])
+    return True
+
+async def async_setup_entry(hass, entry):
+    legacy_id = entry.data.get('legacy_entry_id')
+    if legacy_id:
+        legacy = hass.config_entries.async_get_entry(legacy_id)
+        if legacy and legacy.domain == LEGACY_DOMAIN and legacy.disabled_by is None:
+            # Stop the old controller before this one can subscribe or send.
+            if not await hass.config_entries.async_set_disabled_by(legacy.entry_id, ConfigEntryDisabler.USER):
+                raise RuntimeError('Der bisherige Regler konnte nicht gestoppt werden')
+    if entry.title != NAME:
+        hass.config_entries.async_update_entry(entry, title=NAME)
+    controller = Controller(hass, entry)
+    try:
+        await controller.start()
+        await controller.save()
+        await panel_custom.async_register_panel(hass,
+            frontend_url_path=DOMAIN, webcomponent_name='miner-groundwater-panel',
+            sidebar_title=NAME, sidebar_icon='mdi:coolant-temperature',
+            module_url=f'/{DOMAIN}/panel.js?v={UI_BUILD}', require_admin=True)
+    except Exception:
+        await controller.stop()
+        raise
+    hass.data[DOMAIN]['controller'] = controller
+    return True
+
+async def async_unload_entry(hass, entry):
+    controller = hass.data[DOMAIN].pop('controller', None)
+    if controller:
+        await controller.stop()
+    frontend.async_remove_panel(hass, DOMAIN)
+    return True

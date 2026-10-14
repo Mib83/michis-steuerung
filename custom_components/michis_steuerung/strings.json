@@ -1,0 +1,28 @@
+{
+  "title": "Michi´s Steuerung",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Michi´s Steuerung",
+        "description": "Verwendet die vorhandene MQTT-Integration. Die Topics bestehen aus MQTT-Präfix/Miner-ID/sm0/state bis sm3/state sowie ths/state. Anzeigenamen und individuelle Basispfade sind später in der Bedienseite editierbar. Startet ausgeschaltet.",
+        "data": {
+          "host": "Loxone IPv4-Adresse",
+          "port": "UDP-Empfangsport",
+          "command": "UDP-Befehl vor dem Zahlenwert",
+          "miners": "Vier MQTT-Miner-IDs mit exakter Groß-/Kleinschreibung, durch Kommas getrennt",
+          "prefix": "MQTT-Präfix (z. B. 4A/Miner)"
+        }
+      },
+      "legacy": {
+        "title": "Bisherige Einstellungen übernehmen",
+        "description": "Der bisherige Miner-Regler wurde gefunden. Mit Absenden werden Loxone-Verbindung, MQTT-Pfade, Namen und gespeicherte Regler-Einstellungen übernommen. Der alte Regler wird deaktiviert. Die neue Automatik startet ausgeschaltet."
+      }
+    },
+    "error": {
+      "invalid_config": "IPv4-Adresse, Port, Befehl und vier eindeutige Miner-IDs prüfen."
+    },
+    "abort": {
+      "single_instance_allowed": "Es ist bereits ein Regler eingerichtet."
+    }
+  }
+}
