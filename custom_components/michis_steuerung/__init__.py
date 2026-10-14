@@ -13,7 +13,7 @@ from homeassistant.components.http import StaticPathConfig
 from homeassistant.core import callback
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.storage import Store
-from .const import DEFAULTS, DOMAIN, NAME, VERSION, UI_BUILD, LEGACY_DOMAIN
+from .const import DEFAULTS, DOMAIN, NAME, VERSION, UI_BUILD, LEGACY_DOMAIN, CONTROLLER_NAME
 from .engine import finite, next_output, validate_settings, validate_sources
 
 class Controller:
@@ -324,8 +324,8 @@ async def async_setup_entry(hass, entry):
             # Stop the old controller before this one can subscribe or send.
             if not await hass.config_entries.async_set_disabled_by(legacy.entry_id, ConfigEntryDisabler.USER):
                 raise RuntimeError('Der bisherige Regler konnte nicht gestoppt werden')
-    if entry.title != NAME:
-        hass.config_entries.async_update_entry(entry, title=NAME)
+    if entry.title != CONTROLLER_NAME:
+        hass.config_entries.async_update_entry(entry, title=CONTROLLER_NAME)
     controller = Controller(hass, entry)
     try:
         await controller.start()

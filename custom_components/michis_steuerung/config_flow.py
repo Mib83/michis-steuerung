@@ -3,7 +3,7 @@ import ipaddress
 import probatio as vol
 from homeassistant import config_entries
 from homeassistant.helpers import selector
-from .const import DOMAIN, NAME, LEGACY_DOMAIN
+from .const import DOMAIN, NAME, LEGACY_DOMAIN, CONTROLLER_NAME
 
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     VERSION = 1
@@ -34,7 +34,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 command = user_input['command'].strip()
                 if not command or any(c in command for c in '\r\n') or len(command) > 100:
                     raise ValueError()
-                return self.async_create_entry(title=NAME, data={
+                return self.async_create_entry(title=CONTROLLER_NAME, data={
                     'host': str(ip), 'port': port, 'miners': miners,
                     'command': command, 'prefix': user_input['prefix'].strip().rstrip('/'),
                 })
@@ -52,5 +52,5 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             data = dict(self.legacy.data)
             data['legacy_entry_id'] = self.legacy.entry_id
-            return self.async_create_entry(title=NAME, data=data)
+            return self.async_create_entry(title=CONTROLLER_NAME, data=data)
         return self.async_show_form(step_id='legacy', data_schema=vol.Schema({}))
