@@ -21,7 +21,7 @@ Home Assistant Core 2026.10.1 oder neuer. Mit 2026.10.1 entwickelt; spätere Ver
 
 ### Manuell
 
-Den Ordner `custom_components/miner_ventiel_grundwasser_regler` in den Home-Assistant-Konfigurationsordner kopieren und Home Assistant neu starten. Anschließend unter **Einstellungen → Geräte & Dienste → Integration hinzufügen** nach **Michi´s Steuerung** suchen.
+Den Ordner `custom_components/michis_steuerung` in den Home-Assistant-Konfigurationsordner kopieren und Home Assistant neu starten. Anschließend unter **Einstellungen → Geräte & Dienste → Integration hinzufügen** nach **Michi´s Steuerung** suchen.
 
 ### Über HACS
 
@@ -30,7 +30,7 @@ Den Ordner `custom_components/miner_ventiel_grundwasser_regler` in den Home-Assi
 3. **Michi´s Steuerung** herunterladen und Home Assistant neu starten.
 4. Unter **Einstellungen → Geräte & Dienste → Integration hinzufügen** nach **Michi´s Steuerung** suchen.
 
-Bei einer bereits manuell installierten Version die bestehende Integration weiterverwenden; nicht löschen oder doppelt einrichten. Vor dem Überschreiben die Automatik ausschalten und danach wieder bewusst einschalten.
+Beim Wechsel von der früheren Domain `miner_ventiel_grundwasser_regler` ist einmalig die unten beschriebene Übernahme erforderlich. Bei späteren Updates innerhalb `michis_steuerung` die bestehende Integration weiterverwenden.
 
 ## MQTT-Format
 
@@ -48,7 +48,7 @@ UDP besitzt keine Empfangsbestätigung. Die angezeigte Spannung ist das gesendet
 
 ## Entwicklungsstand
 
-Version 0.1.0 der Oberfläche **Michi´s Steuerung**, aufbauend auf dem bisherigen Miner-Regler. 34 lokale Controller-Tests und Tests der Bedienlogik mit einem simulierten DOM bestanden. Die Integration wird auf einer Testinstallation eingesetzt; ein automatisierter vollständiger HA-Installationstest und ein visueller Browsertest stehen noch aus.
+Version 0.1.1 der Oberfläche **Michi´s Steuerung**, aufbauend auf dem bisherigen Miner-Regler. 38 lokale Controller-Tests und Tests der Bedienlogik mit einem simulierten DOM bestanden. Die Integration wird auf einer Testinstallation eingesetzt; ein automatisierter vollständiger HA-Installationstest und ein visueller Browsertest stehen noch aus.
 
 
 ## Fehler melden
@@ -67,3 +67,17 @@ node tests/test_ui.cjs
 ## Lizenz
 
 Eine Open-Source-Lizenz ist noch nicht festgelegt.
+
+
+## Wechsel von der bisherigen technischen Domain
+
+Ab 0.1.1 heißen Integrationsordner, Domain und Bedienseitenpfad **michis_steuerung**. Der bisherige technische Name bleibt ausschließlich als Erkennungsmerkmal für die Übernahme älterer Installationen im Code.
+
+1. Bisherige Automatik ausschalten. Die alte Integration und ihre gespeicherten Einstellungen vorerst **nicht löschen**.
+2. Das neue Paket so installieren, dass `/config/custom_components/michis_steuerung/manifest.json` existiert. Für den ersten Wechsel empfiehlt sich das manuelle ZIP-Paket. Der bisherige Ordner darf für die Übernahme vorerst bestehen bleiben.
+3. Home Assistant neu starten und die neue Integration mit der Domain `michis_steuerung` hinzufügen. Werden zwei gleichnamige Einträge angeboten, den neuen technischen Namen auswählen.
+4. **Bisherige Einstellungen übernehmen** bestätigen. Loxone-Verbindung, MQTT-Basispfade, Anzeigenamen, Grenzen, Pause und Schnellreaktion werden übernommen. Die alte Integration wird vor dem Start der neuen deaktiviert.
+5. Werte prüfen. Die neue Automatik bleibt ausgeschaltet, bis sie bewusst aktiviert wird.
+6. Erst nach erfolgreicher Prüfung kann die alte deaktivierte Integration entfernt und ihr alter Ordner gelöscht werden. Die importierten Einstellungen sind dann separat unter der neuen Domain gespeichert.
+
+Nicht beide Regler gleichzeitig einschalten. Die Übernahme ist lokal mit simulierten HA-Schnittstellen getestet; ein vollständiger Installationstest dieser Domain-Umstellung in HA steht noch aus.
