@@ -1,4 +1,4 @@
-import './fan-panel.js?v=michis-0.2.0b3';
+import './fan-panel.js?v=michis-0.2.0';
 const DOMAIN = 'michis_steuerung';
 const esc = value => String(value ?? '').replace(/[&<>"']/g, x=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[x]));
 const num = (v,d=1) => v === null || v === undefined ? '—' : Number(v).toLocaleString('de-DE',{minimumFractionDigits:d,maximumFractionDigits:d});
@@ -69,7 +69,7 @@ class MinerGroundwaterPanel extends HTMLElement {
   text('footer',`UDP-Ziel ${s.target} · ${s.last_message?'Zuletzt gesendet: '+s.last_message:'Noch kein Stellwert gesendet'} · v${s.version} · UDP ohne Empfangsbestätigung`);this.graph(s);this.updateFans(s.fans||[]);
   if(!this.sourcesDirty&&s.sources){s.sources.forEach((source,i)=>{for(const [id,value] of [[`source-name-${i}`,source.name],[`source-base-${i}`,source.base],...source.labels.map((label,j)=>[`source-label-${i}-${j}`,label])]){const input=this.shadowRoot.getElementById(id);if(this.shadowRoot.activeElement!==input)input.value=value;}});text('sources-pending','');}
   }
-  updateFans(fans){const root=this.shadowRoot.getElementById('fans');for(const fan of fans){let card=this.fanCards.get(fan.id);if(!card){card=document.createElement('michis-fan-card-020b3');card.onCommand=(action,value)=>this.command('fan_command',{id:fan.id,action,value});card.drawGraph=s=>this.graph.call(card,s);card.onPeriodChange=()=>this.load();this.fanCards.set(fan.id,card);root.appendChild(card);}card.update(fan);}for(const [id,card] of this.fanCards){if(!fans.some(f=>f.id===id)){card.remove();this.fanCards.delete(id);}}}
+  updateFans(fans){const root=this.shadowRoot.getElementById('fans');for(const fan of fans){let card=this.fanCards.get(fan.id);if(!card){card=document.createElement('michis-fan-card-020stable');card.onCommand=(action,value)=>this.command('fan_command',{id:fan.id,action,value});card.drawGraph=s=>this.graph.call(card,s);card.onPeriodChange=()=>this.load();this.fanCards.set(fan.id,card);root.appendChild(card);}card.update(fan);}for(const [id,card] of this.fanCards){if(!fans.some(f=>f.id===id)){card.remove();this.fanCards.delete(id);}}}
   graph(s){const el=this.shadowRoot.getElementById('graph');const seconds=this.historySeconds||3600;const now=Date.now()/1000;const pts=s.history.filter(p=>p.t>=now-seconds);if(pts.length<2){el.innerHTML='<div class="chart" style="display:grid;place-items:center;color:var(--secondary-text-color)">Verlauf wird aufgebaut …</div>';return;}
   const width=Math.max(240,el.clientWidth||725),left=48,right=width-45,top=20,bottom=210,height=245;
   const vals=pts.map(p=>p.temperature).filter(v=>v!==null);const lo=Math.floor(Math.min(s.settings.lower-1,...vals)-.5),hi=Math.ceil(Math.max(s.settings.upper+1,...vals)+.5);const span=hi-lo||1,start=now-seconds,end=now;const x=t=>left+(t-start)/seconds*(right-left),y=t=>bottom-(t-lo)/span*(bottom-top),v=n=>bottom-n/10*(bottom-top);
@@ -80,4 +80,4 @@ class MinerGroundwaterPanel extends HTMLElement {
 
   }
 }
-if(!customElements.get('michis-steuerung-panel-020b3'))customElements.define('michis-steuerung-panel-020b3',MinerGroundwaterPanel);
+if(!customElements.get('michis-steuerung-panel-020stable'))customElements.define('michis-steuerung-panel-020stable',MinerGroundwaterPanel);
