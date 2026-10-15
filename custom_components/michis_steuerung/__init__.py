@@ -368,7 +368,7 @@ async def async_setup_entry(hass, entry):
         await controller.start()
         await controller.save()
         await panel_custom.async_register_panel(hass,
-            frontend_url_path=DOMAIN, webcomponent_name='michis-steuerung-panel-020b2',
+            frontend_url_path=DOMAIN, webcomponent_name='michis-steuerung-panel-020b3',
             sidebar_title=NAME, sidebar_icon='mdi:coolant-temperature',
             module_url=f'/{DOMAIN}/panel.js?v={UI_BUILD}', require_admin=True)
     except Exception:
