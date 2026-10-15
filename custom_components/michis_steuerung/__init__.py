@@ -41,6 +41,7 @@ class Controller:
         self.unsubscribers = []
         self.mqtt_unsubscribers = []
         self.fans = {}
+        self.waters = {}
         self.legacy_fans = []
         self.sources = [{'name': miner.upper().replace('_', '-'),
             'base': f"{entry.data['prefix']}/{miner}",
@@ -139,7 +140,7 @@ class Controller:
             status = 'Kühlung reduzieren' if self.output > 0 else 'Untergrenze 0 V erreicht'
         else:
             status = 'Temperatur im gewünschten Bereich'
-        return {'fans': [fan.snapshot((history_periods or {}).get(fan.fan_id, 3600)) for fan in self.fans.values()], 'fast_pending': self.pending_jump is not None, 'last_fast_event': self.last_fast_event, 'sources': self.sources, 'settings': self.settings, 'output': self.output, 'enabled': self.enabled,
+        return {'waters': [water.snapshot() for water in self.waters.values()], 'fans': [fan.snapshot((history_periods or {}).get(fan.fan_id, 3600)) for fan in self.fans.values()], 'fast_pending': self.pending_jump is not None, 'last_fast_event': self.last_fast_event, 'sources': self.sources, 'settings': self.settings, 'output': self.output, 'enabled': self.enabled,
             'miners': miners, 'maximum': maximum, 'ready': ready, 'valid_count': len(valid),
             'remaining': round(remaining,1), 'status': status,
             'last_message': self.last_message, 'sent_output': self.last_sent_output, 'last_error': self.last_error,
@@ -261,6 +262,11 @@ class Controller:
                 self.last_history = time.monotonic()
 
     async def command(self, action, value):
+        if action == 'water_command':
+            if not isinstance(value, dict) or value.get('id') not in self.waters:
+                raise ValueError('Brauchwasser-Regler nicht gefunden')
+            await self.waters[value['id']].command(value.get('action'), value.get('value'))
+            return self.snapshot()
         if action in ('fan_add', 'fan_command'):
             return await self.fan_action(action, value)
         async with self.lock:
@@ -300,6 +306,8 @@ class Controller:
         return self.snapshot()
 
     async def stop(self):
+        for water in list(self.waters.values()):
+            await water.stop()
         for fan in self.fans.values():
             await fan.stop()
         self.enabled = False
@@ -348,10 +356,14 @@ async def async_setup(hass, config):
     await hass.http.async_register_static_paths([
         StaticPathConfig(f'/{DOMAIN}/panel.js', str(Path(__file__).parent / 'panel.js'), False),
         StaticPathConfig(f'/{DOMAIN}/fan-panel.js', str(Path(__file__).parent / 'fan-panel.js'), False),
+        StaticPathConfig(f'/{DOMAIN}/water-panel.js', str(Path(__file__).parent / 'water-panel.js'), False),
+        StaticPathConfig(f'/{DOMAIN}/warmwasserspeicher-v2.png', str(Path(__file__).parent / 'warmwasserspeicher-v2.png'), False),
         StaticPathConfig(f'/{DOMAIN}/brand', str(Path(__file__).parent / 'brand'), True)])
     return True
 
 async def async_setup_entry(hass, entry):
+    if entry.data.get('kind') == 'water':
+        return await setup_water_entry(hass, entry)
     if entry.data.get('kind') == 'fan':
         return await setup_fan_entry(hass, entry)
     legacy_id = entry.data.get('legacy_entry_id')
@@ -368,7 +380,7 @@ async def async_setup_entry(hass, entry):
         await controller.start()
         await controller.save()
         await panel_custom.async_register_panel(hass,
-            frontend_url_path=DOMAIN, webcomponent_name='michis-steuerung-panel-020stable',
+            frontend_url_path=DOMAIN, webcomponent_name='michis-steuerung-panel-030b1',
             sidebar_title=NAME, sidebar_icon='mdi:coolant-temperature',
             module_url=f'/{DOMAIN}/panel.js?v={UI_BUILD}', require_admin=True)
     except Exception:
@@ -384,12 +396,19 @@ async def async_setup_entry(hass, entry):
         frontend.async_remove_panel(hass, DOMAIN)
         raise
     # A parent reload replaces the runtime; reload previously running child entries.
-    for child_id, fan in list(hass.data[DOMAIN].get('fan_entries', {}).items()):
+    children = {**hass.data[DOMAIN].get('fan_entries', {}), **hass.data[DOMAIN].get('water_entries', {})}
+    for child_id, fan in list(children.items()):
         if fan.parent is not controller:
             hass.async_create_task(hass.config_entries.async_reload(child_id))
     return True
 
 async def async_unload_entry(hass, entry):
+    if entry.data.get('kind') == 'water':
+        water = hass.data[DOMAIN].get('water_entries', {}).pop(entry.entry_id, None)
+        if water:
+            await water.stop()
+            water.parent.waters.pop(water.water_id, None)
+        return True
     if entry.data.get('kind') == 'fan':
         fan = hass.data[DOMAIN].get('fan_entries', {}).pop(entry.entry_id, None)
         if fan:
@@ -434,6 +453,8 @@ async def setup_fan_entry(hass, entry):
 
 
 async def async_remove_entry(hass, entry):
+    if entry.data.get('kind') == 'water':
+        await Store(hass, 1, f"{DOMAIN}.water.{entry.data['water_id']}").async_remove()
     if entry.data.get('kind') == 'fan':
         await Store(hass, 1, f"{DOMAIN}.fan.{entry.data['fan_id']}").async_remove()
 
@@ -451,3 +472,29 @@ async def migrate_legacy_fans(hass, controller):
             raise ValueError('Vorhandener Lüfter konnte nicht übernommen werden; Quelldaten bleiben erhalten')
     controller.legacy_fans = []
     await controller.save()
+
+
+async def setup_water_entry(hass, entry):
+    from homeassistant.exceptions import ConfigEntryNotReady
+    from .water import WaterController
+    parent = hass.data[DOMAIN].get('controller')
+    if parent is None:
+        raise ConfigEntryNotReady('Michi´s Steuerung wird noch gestartet')
+    water = WaterController(parent, entry)
+    validate_water_outputs(parent, water.entities)
+    parent.waters[water.water_id] = water
+    try:
+        await water.start()
+    except Exception:
+        parent.waters.pop(water.water_id, None)
+        await water.stop()
+        raise
+    hass.data[DOMAIN].setdefault('water_entries', {})[entry.entry_id] = water
+    return True
+
+
+def validate_water_outputs(parent, entities):
+    outputs = {entities['top_switch'], entities['pump_switch']}
+    for water in parent.waters.values():
+        if outputs & {water.entities['top_switch'], water.entities['pump_switch']}:
+            raise ValueError('Heizstab oder Pumpe wird bereits durch einen Brauchwasser-Regler verwendet')

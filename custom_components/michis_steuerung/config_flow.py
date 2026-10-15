@@ -15,10 +15,10 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             if legacy_entries and not self._async_current_entries():
                 self.legacy = legacy_entries[0]
                 return await self.async_step_legacy()
-        return self.async_show_menu(step_id='user', menu_options=['miner', 'fan'])
+        return self.async_show_menu(step_id='user', menu_options=['miner', 'fan', 'water'])
 
     async def async_step_miner(self, user_input=None):
-        if any(e.data.get('kind') != 'fan' for e in self._async_current_entries()):
+        if any(e.data.get('kind') not in ('fan','water') for e in self._async_current_entries()):
             return self.async_abort(reason='single_miner_allowed')
         errors = {}
         if user_input is not None:
@@ -106,3 +106,30 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._abort_if_unique_id_configured()
         config = validate_config(data['config'])
         return self.async_create_entry(title=config['name'], data=data)
+
+
+    async def async_step_water(self, user_input=None):
+        from . import validate_water_outputs
+        from .water_engine import DEFAULT_ENTITIES, validate_entities
+        parent = self.hass.data.get(DOMAIN, {}).get('controller')
+        if parent is None:
+            return self.async_abort(reason='controller_not_ready')
+        errors = {}
+        if user_input is not None:
+            try:
+                entities = validate_entities(user_input)
+                validate_water_outputs(parent, entities)
+            except (ValueError,TypeError) as error:
+                errors['base'] = 'invalid_water'
+                self._water_error = str(error)
+            else:
+                water_id = uuid.uuid4().hex
+                await self.async_set_unique_id('water_' + water_id)
+                return self.async_create_entry(title='Brauchwasser Regler',data={
+                    'kind':'water','water_id':water_id,'name':'Brauchwasser Regler','entities':entities})
+        schema = {}
+        for key, default in DEFAULT_ENTITIES.items():
+            domain = 'sensor' if key.endswith('temperature') else 'switch' if key.endswith('switch') else 'binary_sensor'
+            schema[vol.Required(key,default=(user_input or {}).get(key,default))] = selector.EntitySelector(selector.EntitySelectorConfig(domain=domain))
+        return self.async_show_form(step_id='water',data_schema=vol.Schema(schema),errors=errors,
+            description_placeholders={'error':getattr(self,'_water_error','')})
