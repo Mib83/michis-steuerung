@@ -433,7 +433,7 @@ class Beta2Tests(unittest.IsolatedAsyncioTestCase):
         return flow
     async def test_menu_and_new_fan_config_entry(self):
         flow=self.flow()
-        self.assertEqual((await flow.async_step_user())['menu_options'],['miner','fan'])
+        self.assertEqual((await flow.async_step_user())['menu_options'],['miner','fan','water'])
         config=dict(self.config,command='Other:')
         result=await flow.async_step_fan(config)
         self.assertEqual(result['data']['kind'],'fan');self.assertEqual(result['title'],config['name'])
@@ -474,6 +474,17 @@ class Beta2Tests(unittest.IsolatedAsyncioTestCase):
         await backend.async_unload_entry(hass,child)
         self.assertNotIn('fan1',self.parent.fans);self.assertIs(hass.data[backend.DOMAIN]['controller'],self.parent)
         self.assertEqual(restored.fan_store.data['output'],3.7)
+    async def test_water_entry_uses_supplied_loxone_entities(self):
+        from controller_under_test.water_engine import DEFAULT_ENTITIES
+        flow=self.flow();result=await flow.async_step_water(dict(DEFAULT_ENTITIES))
+        self.assertEqual(result['data']['kind'],'water')
+        self.assertEqual(result['data']['entities']['pump_feedback'],'binary_sensor.heizraum_pumpe_wasserzirkulation')
+        self.assertEqual(result['title'],'Brauchwasser Regler')
+        self.assertEqual(flow.unique_id,'water_'+result['data']['water_id'])
+    async def test_water_output_conflicts_rejected(self):
+        from controller_under_test.water_engine import DEFAULT_ENTITIES
+        self.parent.waters['existing']=types.SimpleNamespace(entities=dict(DEFAULT_ENTITIES))
+        with self.assertRaises(ValueError):backend.validate_water_outputs(self.parent,DEFAULT_ENTITIES)
     async def test_chart_period_filters_and_keeps_extrema(self):
         from controller_under_test.history import chart_history
         now=time.time();points=[{'t':now-86400+i*5,'temperature':25.,'output':2.} for i in range(17281)]
@@ -483,5 +494,124 @@ class Beta2Tests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(40,[p['temperature'] for p in selected]);self.assertIn(None,[p['temperature'] for p in selected]);self.assertIn(9,[p['output'] for p in selected])
         short=chart_history(points,900,now);self.assertTrue(all(p['t']>=now-900 for p in short))
         with self.assertRaises(ValueError):chart_history(points,123,now)
+
+
+class WaterTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        self.now=datetime(2026,10,19,8,5,tzinfo=ZoneInfo('Europe/Berlin'))
+        self.receivers=[]
+        sys.modules['homeassistant.helpers.event'].async_track_state_change_event=lambda h,ids,fn:self.receivers.append(fn) or (lambda:None)
+        module('homeassistant.util')
+        module('homeassistant.util.dt',now=lambda:self.now)
+        import importlib
+        self.water_module=importlib.import_module(package+'.water')
+        self.water_engine=importlib.import_module(package+'.water_engine')
+        self.water_module.async_track_state_change_event=lambda h,ids,fn:self.receivers.append(fn) or (lambda:None)
+        self.water_module.dt_util=types.SimpleNamespace(now=lambda:self.now)
+        self.states={}
+        for key,entity in self.water_engine.DEFAULT_ENTITIES.items():
+            self.states[entity]=types.SimpleNamespace(state='45' if key.endswith('temperature') else 'off',attributes={'unit_of_measurement':'°C'} if key.endswith('temperature') else {})
+        self.calls=[]
+        async def service(domain,action,data,blocking):self.calls.append((domain,action,data['entity_id']))
+        self.hass=types.SimpleNamespace(states=types.SimpleNamespace(get=self.states.get),services=types.SimpleNamespace(async_call=service))
+        self.parent=types.SimpleNamespace(hass=self.hass,waters={})
+        self.entry=types.SimpleNamespace(data={'water_id':'water1','entities':dict(self.water_engine.DEFAULT_ENTITIES),'name':'Brauchwasser Regler'})
+        self.c=self.water_module.WaterController(self.parent,self.entry)
+        await self.c.start()
+        self.settings=__import__('copy').deepcopy(self.water_engine.WATER_DEFAULTS)
+        self.settings.update(target_top=50,restart_top=45,wait_off=120)
+        await self.c.command('settings',self.settings)
+        self.c.last_top_off=time.time()-121
+    async def asyncTearDown(self):
+        self.c.enabled=False
+        await self.c.stop()
+    def feedback(self,key,state):
+        entity=self.c.entities[key]
+        old=self.states[entity];new=types.SimpleNamespace(state=state,attributes=old.attributes)
+        self.states[entity]=new
+        for fn in self.receivers:fn(types.SimpleNamespace(data={'entity_id':entity,'old_state':old,'new_state':new}))
+    def temperature(self,value):self.states[self.c.entities['top_temperature']].state=str(value)
+    async def enable(self):await self.c.command('enable',True)
+    async def test_start_does_not_send_and_lower_heater_never_commanded(self):
+        self.assertEqual(self.calls,[]);self.assertFalse(self.c.enabled)
+        await self.enable();await self.c.tick(None)
+        self.assertEqual(self.calls,[('switch','turn_on',self.c.entities['top_switch'])])
+        self.assertNotIn(self.c.entities['bottom_switch'],[c[2] for c in self.calls])
+    async def test_hysteresis_and_no_repeated_commands(self):
+        await self.enable();await self.c.tick(None);await self.c.tick(None)
+        self.assertEqual(len(self.calls),1)
+        self.feedback('top_feedback','on');self.temperature(49);await self.c.tick(None)
+        self.assertEqual(len(self.calls),1)
+        self.temperature(50);await self.c.tick(None)
+        self.assertEqual(self.calls[-1][1],'turn_off')
+    async def test_lockout_starts_from_feedback_and_blocks_reenable(self):
+        await self.enable();await self.c.tick(None);self.feedback('top_feedback','on')
+        self.temperature(50);await self.c.tick(None)
+        self.assertEqual(self.c.remaining(),0)
+        self.feedback('top_feedback','off');self.assertGreater(self.c.remaining(),119)
+        self.temperature(40);await self.c.tick(None)
+        count=len(self.calls);await self.c.tick(None);self.assertEqual(len(self.calls),count)
+        self.c.last_top_off=time.time()-121;await self.c.tick(None);self.assertEqual(self.calls[-1][1],'turn_on')
+    async def test_manual_external_off_also_starts_lockout(self):
+        self.feedback('top_feedback','on');self.feedback('top_feedback','off')
+        self.assertGreater(self.c.remaining(),119)
+    async def test_invalid_temperature_turns_controlled_outputs_off_and_latches_fault(self):
+        await self.enable();self.temperature('unavailable');await self.c.tick(None)
+        self.assertFalse(self.c.enabled);self.assertTrue(self.c.last_error)
+        self.assertEqual({(a,e) for _,a,e in self.calls},{('turn_off',self.c.entities['top_switch']),('turn_off',self.c.entities['pump_switch'])})
+        self.temperature(40);count=len(self.calls);await self.c.tick(None);self.assertEqual(len(self.calls),count)
+    async def test_missing_feedback_times_out_and_compensates_with_off(self):
+        await self.enable();await self.c.tick(None)
+        self.c.pending['top']['sent']=time.monotonic()-16
+        await self.c.tick(None);self.assertFalse(self.c.enabled)
+        self.assertEqual(self.calls[-2][1],'turn_off');self.assertEqual(self.calls[-1][1],'turn_off')
+    async def test_switch_service_error_disables_automation(self):
+        self.hass.services.async_call=AsyncMock(side_effect=RuntimeError('offline'))
+        await self.enable();await self.c.tick(None);self.assertFalse(self.c.enabled);self.assertIn('offline',self.c.last_error)
+    async def test_automatic_off_sends_off_to_heater_and_pump(self):
+        self.feedback('top_feedback','on');self.feedback('pump_feedback','on')
+        await self.c.command('enable',False)
+        self.assertEqual([c[1] for c in self.calls],['turn_off','turn_off'])
+    async def test_bottom_sensor_failure_does_not_switch_bottom_element(self):
+        self.feedback('bottom_temperature','unavailable');self.feedback('bottom_feedback','on')
+        await self.enable();await self.c.tick(None)
+        self.assertTrue(self.c.enabled);self.assertNotIn(self.c.entities['bottom_switch'],[c[2] for c in self.calls])
+    async def test_legionella_holds_target_with_same_difference_and_pump(self):
+        from datetime import datetime
+        self.settings.update(legionella_enabled=True,legionella_target=60,legionella_from='08:00',legionella_until='09:00',legionella_days=[0],legionella_pump=True)
+        await self.c.command('settings',self.settings)
+        self.temperature(54);await self.enable();await self.c.tick(None)
+        self.assertEqual({c[2] for c in self.calls},{self.c.entities['top_switch'],self.c.entities['pump_switch']})
+        self.feedback('top_feedback','on');self.feedback('pump_feedback','on');self.temperature(60);await self.c.tick(None)
+        self.assertEqual(self.calls[-1][1],'turn_off')
+        self.feedback('top_feedback','off');self.temperature(55);await self.c.tick(None);self.c.last_top_off=time.time()-121;await self.c.tick(None)
+        self.assertEqual(self.calls[-1][1],'turn_on')
+        self.now=self.now.replace(hour=9,minute=0);self.temperature(60);self.feedback('top_feedback','on');await self.c.tick(None)
+        self.assertFalse(self.water_engine.water_demand(self.c.settings,60,True,False,self.now)['legionella'])
+        self.assertEqual(self.calls[-1],('switch','turn_off',self.c.entities['pump_switch']))
+    async def test_circulation_windows_union_and_overnight_starting_day(self):
+        active=self.water_engine.active_window
+        self.assertTrue(active([0],'08:00','08:10',self.now))
+        self.assertFalse(active([2],'08:00','08:10',self.now))
+        self.assertTrue(active([6],'23:00','01:00',self.now.replace(hour=0,minute=30)))
+        self.assertFalse(active([0],'23:00','01:00',self.now.replace(hour=0,minute=30)))
+        self.assertFalse(active([0],'08:00','08:05',self.now))
+    async def test_settings_reject_bad_times_days_and_restart(self):
+        import copy
+        for patch_data in [dict(restart_top=50),dict(wait_off=-1),dict(windows=[{'days':[7],'on':'08:00','off':'09:00'}]),dict(windows=[{'days':[0],'on':'08:00','off':'08:00'}]),dict(legionella_enabled=True),dict(legionella_days=[True])]:
+            with self.assertRaises((ValueError,TypeError)):self.water_engine.validate_water_settings(dict(copy.deepcopy(self.settings),**patch_data))
+    async def test_persistence_restores_lockout_but_not_automation(self):
+        self.c.last_top_off=time.time();await self.c.save()
+        other=self.water_module.WaterController(self.parent,self.entry);other.store.data=self.c.store.data
+        await other.start();self.assertFalse(other.enabled);self.assertGreater(other.remaining(),119);self.assertEqual(other.settings['restart_top'],45)
+        await other.stop();self.assertEqual(self.calls,[])
+    async def test_unit_conversion_unknown_and_invalid_feedback(self):
+        parse=self.water_module.state_temperature
+        self.assertAlmostEqual(parse(types.SimpleNamespace(state='122',attributes={'unit_of_measurement':'°F'})),50)
+        for value in ['unknown','unavailable','nan','9999']:
+            self.assertIsNone(parse(types.SimpleNamespace(state=value,attributes={})))
+        self.assertIsNone(self.water_module.state_binary(types.SimpleNamespace(state='unknown')))
 
 if __name__=='__main__':unittest.main(verbosity=2)

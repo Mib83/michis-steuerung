@@ -4,11 +4,11 @@ class Root{
   constructor(){this.elements={};this.activeElement=null;}
   set innerHTML(html){this.html=html;for(const m of html.matchAll(/id="([^"]+)"/g))this.elements[m[1]]={value:'',checked:false,disabled:false,style:{},textContent:'',reportValidity:()=>true,hidden:false,attributes:{},setAttribute(k,v){this.attributes[k]=v;},classList:{toggle(){}}};}
   getElementById(id){if(!this.elements[id])throw Error('Missing field '+id);return this.elements[id];}
-  querySelectorAll(selector){const ids=Object.keys(this.elements);if(selector==='.sources input')return ids.filter(id=>/^source-(name|base|label)-/.test(id)).map(id=>this.elements[id]);if(selector.includes('.settings input'))return ['lower','upper','step','pause','stale','fast_threshold','fast_step','fast_enabled','fast_immediate'].map(id=>this.elements[id]);if(selector==='button.control')return ['auto','send','save','save-sources'].map(id=>this.elements[id]);throw Error(selector);}
+  querySelectorAll(selector){const ids=Object.keys(this.elements);if(selector==='.sources input')return ids.filter(id=>/^source-(name|base|label)-/.test(id)).map(id=>this.elements[id]);if(selector.includes('.settings input'))return ['lower','upper','step','pause','stale','fast_threshold','fast_step','fast_enabled','fast_immediate'].map(id=>this.elements[id]);if(selector==='button.control')return ['send','save','save-sources'].map(id=>this.elements[id]);throw Error(selector);}
 }
 let Panel;
 const context={console,HTMLElement:class{attachShadow(){this.shadowRoot=new Root()}},customElements:{get:()=>false,define:(_name,cls)=>Panel=cls},setInterval,clearInterval,CustomEvent:class{}};
-vm.createContext(context);vm.runInContext(fs.readFileSync('custom_components/michis_steuerung/panel.js','utf8').replace(/^import .*\n/,''),context);
+vm.createContext(context);vm.runInContext(fs.readFileSync('custom_components/michis_steuerung/panel.js','utf8').replace(/^import .*\n/gm,''),context);
 (async()=>{
 const p=new Panel();p.render();
 const settings={lower:43,upper:44,step:.2,pause:15,stale:30,fast_enabled:true,fast_threshold:3,fast_step:.6,fast_immediate:true};
