@@ -2,7 +2,11 @@
   "title": "Michi´s Steuerung",
   "config": {
     "step": {
-      "user": {
+      "legacy": {
+        "title": "Bisherige Einstellungen übernehmen",
+        "description": "Der bisherige Miner-Regler wurde gefunden. Mit Absenden werden Loxone-Verbindung, MQTT-Pfade, Namen und gespeicherte Regler-Einstellungen übernommen. Der alte Regler wird deaktiviert. Die neue Automatik startet ausgeschaltet."
+      },
+      "miner": {
         "title": "Michi´s Steuerung",
         "description": "Verwendet die vorhandene MQTT-Integration. Die Topics bestehen aus MQTT-Präfix/Miner-ID/sm0/state bis sm3/state sowie ths/state. Anzeigenamen und individuelle Basispfade sind später in der Bedienseite editierbar. Startet ausgeschaltet.",
         "data": {
@@ -13,16 +17,41 @@
           "prefix": "MQTT-Präfix (z. B. 4A/Miner)"
         }
       },
-      "legacy": {
-        "title": "Bisherige Einstellungen übernehmen",
-        "description": "Der bisherige Miner-Regler wurde gefunden. Mit Absenden werden Loxone-Verbindung, MQTT-Pfade, Namen und gespeicherte Regler-Einstellungen übernommen. Der alte Regler wird deaktiviert. Die neue Automatik startet ausgeschaltet."
+      "user": {
+        "title": "Gerät hinzufügen",
+        "description": "Wähle den Gerätetyp.",
+        "menu_options": {
+          "miner": "Miner Ventiel Grundwasser Regler",
+          "fan": "0-10V Lüftersteuerung Loxone"
+        }
+      },
+      "fan": {
+        "title": "0-10V Lüftersteuerung Loxone",
+        "description": "Standard: 27–28 °C, Schrittweite 0,2 V, Wartezeit 120 Sekunden. Der Lüfter startet ausgeschaltet. Eigener UDP-Befehlsname erforderlich. {error}",
+        "data": {
+          "name": "Anzeigename",
+          "sensor_host": "ESP32-IP-Adresse",
+          "sensor_port": "Modbus-Port",
+          "unit": "Modbus-Geräteadresse",
+          "host": "Loxone-IP-Adresse",
+          "port": "UDP-Port",
+          "command": "UDP-Befehlsname mit Trennzeichen",
+          "minimum": "Mindestspannung · V",
+          "maximum": "Höchstspannung · V",
+          "off_mode": "Bei Automatik aus"
+        }
       }
     },
     "error": {
-      "invalid_config": "IPv4-Adresse, Port, Befehl und vier eindeutige Miner-IDs prüfen."
+      "invalid_config": "IPv4-Adresse, Port, Befehl und vier eindeutige Miner-IDs prüfen.",
+      "invalid_fan": "Lüfter-Einstellungen prüfen; Details stehen oben."
     },
     "abort": {
-      "single_instance_allowed": "Es ist bereits ein Regler eingerichtet."
+      "single_instance_allowed": "Es ist bereits ein Regler eingerichtet.",
+      "single_miner_allowed": "Der Miner-Regler ist bereits eingerichtet. Für weitere Geräte bitte Lüfter wählen.",
+      "controller_not_ready": "Bitte zuerst den Miner-Regler einrichten bzw. starten.",
+      "already_configured": "Dieser Regler wurde bereits übernommen.",
+      "invalid_import": "Ungültige Gerätedaten."
     }
   }
 }
