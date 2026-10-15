@@ -16,7 +16,7 @@ def module(name, **attrs):
     sys.modules[name]=m
     return m
 identity=lambda f:f
-module('probatio',Required=lambda x:x)
+module('probatio',Required=lambda x,**kwargs:x,Optional=lambda x:x)
 module('homeassistant')
 module('homeassistant.config_entries',ConfigEntryDisabler=types.SimpleNamespace(USER='user'))
 module('homeassistant.components')
@@ -353,7 +353,7 @@ class FanTests(unittest.IsolatedAsyncioTestCase):
     async def test_independent_fans_and_settings_restored(self):
         from controller_under_test.fan import FanController
         self.f.output=3.2;await self.f.save()
-        saved=self.parent.store.data['fans'][0]
+        saved=self.f.fan_store.data
         restored=FanController(self.parent,'fan1',saved['config'],saved)
         self.assertEqual(restored.output,3.2);self.assertEqual(restored.settings['pause'],120)
         self.assertFalse(restored.enabled);self.assertEqual(self.parent.output,4)
@@ -407,5 +407,81 @@ class ModbusTests(unittest.IsolatedAsyncioTestCase):
         import struct
         for reply in [struct.pack('>HHHBBB',2,0,3,1,0x83,2),struct.pack('>HHHBBB',1,0,3,1,0x83,2),b'\0']:
             with self.assertRaises((ValueError,asyncio.IncompleteReadError)):await self.exchange(reply)
+
+
+class Beta2Tests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        await FanTests.asyncSetUp(self)
+    async def asyncTearDown(self):
+        await FanTests.asyncTearDown(self)
+    def flow(self):
+        class FlowBase:
+            def __init_subclass__(cls, **kwargs):pass
+            def _async_current_entries(self):return [types.SimpleNamespace(data={})]
+            def async_show_menu(self, **kwargs):return kwargs
+            def async_show_form(self, **kwargs):return kwargs
+            def async_create_entry(self, **kwargs):return kwargs
+            def async_abort(self, **kwargs):return kwargs
+            async def async_set_unique_id(self, value):self.unique_id=value
+            def _abort_if_unique_id_configured(self):pass
+        sys.modules['homeassistant.config_entries'].ConfigFlow=FlowBase
+        sys.modules['probatio'].Schema=lambda data:data
+        module('homeassistant.helpers.selector',NumberSelector=lambda x:x,NumberSelectorConfig=lambda **kw:kw,SelectSelector=lambda x:x,SelectSelectorConfig=lambda **kw:kw)
+        spec=importlib.util.spec_from_file_location(package+'.config_flow',ROOT/'config_flow.py')
+        m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
+        flow=m.ConfigFlow();flow.hass=types.SimpleNamespace(data={backend.DOMAIN:{'controller':self.parent}},config_entries=types.SimpleNamespace(async_entries=lambda d:[]))
+        return flow
+    async def test_menu_and_new_fan_config_entry(self):
+        flow=self.flow()
+        self.assertEqual((await flow.async_step_user())['menu_options'],['miner','fan'])
+        config=dict(self.config,command='Other:')
+        result=await flow.async_step_fan(config)
+        self.assertEqual(result['data']['kind'],'fan');self.assertEqual(result['title'],config['name'])
+        self.assertEqual(flow.unique_id,'fan_'+result['data']['fan_id'])
+    async def test_duplicate_target_rejected_in_add_form(self):
+        flow=self.flow();result=await flow.async_step_fan(self.config)
+        self.assertEqual(result['errors'],{'base':'invalid_fan'})
+    async def test_beta1_import_preserves_full_configuration(self):
+        flow=self.flow();saved=self.f.serialized()
+        result=await flow.async_step_import({'kind':'fan','fan_id':'fan1','config':self.config,'initial':saved})
+        self.assertEqual(result['data']['initial']['settings']['pause'],120)
+        self.assertEqual(flow.unique_id,'fan_fan1')
+    async def test_migration_clears_source_only_after_entry_created(self):
+        saved=self.f.serialized();self.parent.legacy_fans=[saved]
+        init=AsyncMock(return_value={'type':'create_entry'})
+        hass=types.SimpleNamespace(config_entries=types.SimpleNamespace(async_entries=lambda d:[],flow=types.SimpleNamespace(async_init=init)))
+        await backend.migrate_legacy_fans(hass,self.parent)
+        self.assertEqual(self.parent.legacy_fans,[])
+        self.assertEqual(init.call_args.kwargs['data']['initial'],saved)
+    async def test_failed_migration_keeps_beta1_source(self):
+        saved=self.f.serialized();self.parent.legacy_fans=[saved]
+        hass=types.SimpleNamespace(config_entries=types.SimpleNamespace(async_entries=lambda d:[],flow=types.SimpleNamespace(async_init=AsyncMock(return_value={'type':'abort','reason':'error'}))))
+        with self.assertRaises(ValueError):await backend.migrate_legacy_fans(hass,self.parent)
+        self.assertEqual(self.parent.legacy_fans,[saved])
+    async def test_existing_migrated_fan_not_imported_twice(self):
+        saved=self.f.serialized();self.parent.legacy_fans=[saved]
+        init=AsyncMock();hass=types.SimpleNamespace(config_entries=types.SimpleNamespace(async_entries=lambda d:[types.SimpleNamespace(data={'kind':'fan','fan_id':'fan1'})],flow=types.SimpleNamespace(async_init=init)))
+        await backend.migrate_legacy_fans(hass,self.parent);init.assert_not_awaited()
+    async def test_child_setup_restore_and_unload_are_independent(self):
+        from controller_under_test.fan import FanController
+        module('homeassistant.exceptions',ConfigEntryNotReady=RuntimeError)
+        self.parent.fans.clear();hass=self.parent.hass;hass.data={backend.DOMAIN:{'controller':self.parent}}
+        hass.config_entries=types.SimpleNamespace(async_update_entry=lambda e,**kw:setattr(e,'title',kw['title']))
+        saved=self.f.serialized();saved['output']=3.7
+        child=types.SimpleNamespace(entry_id='child',title=self.config['name'],data={'kind':'fan','fan_id':'fan1','config':self.config,'initial':saved})
+        with patch.object(FanController,'start',new=AsyncMock()):await backend.setup_fan_entry(hass,child)
+        restored=self.parent.fans['fan1'];self.assertEqual(restored.output,3.7);self.assertFalse(restored.enabled)
+        await backend.async_unload_entry(hass,child)
+        self.assertNotIn('fan1',self.parent.fans);self.assertIs(hass.data[backend.DOMAIN]['controller'],self.parent)
+        self.assertEqual(restored.fan_store.data['output'],3.7)
+    async def test_chart_period_filters_and_keeps_extrema(self):
+        from controller_under_test.history import chart_history
+        now=time.time();points=[{'t':now-86400+i*5,'temperature':25.,'output':2.} for i in range(17281)]
+        points[-100]['temperature']=40.;points[-80]['temperature']=None;points[-70]['output']=9.
+        selected=chart_history(points,86400,now)
+        self.assertLessEqual(len(selected),700)
+        self.assertIn(40,[p['temperature'] for p in selected]);self.assertIn(None,[p['temperature'] for p in selected]);self.assertIn(9,[p['output'] for p in selected])
+        short=chart_history(points,900,now);self.assertTrue(all(p['t']>=now-900 for p in short))
+        with self.assertRaises(ValueError):chart_history(points,123,now)
 
 if __name__=='__main__':unittest.main(verbosity=2)
