@@ -64,3 +64,20 @@ node tests/test_ui.cjs
 ```
 
 Fehler und Verbesserungen bitte unter [Issues](https://github.com/Mib83/michis-steuerung/issues) melden. Eine Open-Source-Lizenz ist noch nicht festgelegt.
+
+
+## V0.3-Beta1 – Brauchwasser Regler
+
+Die neue Version ist als Vorabversion V0.3-Beta1 verfügbar. Unter Gerät hinzufügen steht **Brauchwasser Regler** zur Verfügung. Die im Einrichtungsdialog vorbelegten PyLoxone-Entitäten müssen zur Anlage passen. Die zwei Temperatursensoren und Relaisrückmeldungen werden direkt aus Home Assistant gelesen. Schalten erfolgt über die vorhandenen `switch.turn_on`/`switch.turn_off`-Aktionen; zusätzlicher UDP-Transport ist nicht erforderlich.
+
+Nur der obere Heizstab wird im Normalbetrieb und Legionellenprogramm geregelt. Der untere Heizstab wird niemals geschaltet. Zieltemperatur oben, Wiedereinschalten ab und Sperrzeit sind zunächst leer und müssen vor dem Aktivieren gespeichert werden. Ausschalten erfolgt bei Erreichen der Zieltemperatur. Wiedereinschalten erfolgt bei oder unter der eingestellten Wiedereinschalttemperatur, sobald die Sperrzeit abgelaufen ist. Die Sperrzeit beginnt mit bestätigtem Ausschalten über die obere binäre Rückmeldung. Ist nach erstmaligem Start keine frühere Ausschaltzeit bekannt und das Relais aus, beginnt vorsichtshalber die konfigurierte Sperrzeit.
+
+Im Legionellen-Zeitfenster gilt die gesonderte Zieltemperatur. Die normale Schaltdifferenz (Zieltemperatur minus Wiedereinschalttemperatur) wird auf diese Zieltemperatur übertragen. Die Sperrzeit wird auch dabei eingehalten. Dies ist eine Regelung des oberen Fühlers/Heizstabs; es erfolgt keine automatische Prüfung oder Bestätigung einer hygienischen Wirksamkeit für den gesamten Speicher oder Leitungen. Zieltemperatur und Zeitfenster haben keine vorgegebenen Werte. Bei gesetztem Pumpen-Häkchen läuft die Zirkulation während des gesamten Legionellen-Zeitfensters.
+
+Jedes reguläre Zirkulations-Zeitfenster hat eigene Wochentage und Ein-/Aus-Zeiten. Überlappende Zeitfenster gelten gemeinsam. Bei Zeitfenstern über Mitternacht gehört der Anteil am Folgetag zum ausgewählten Starttag. Beginn zählt zum Zeitfenster, Endzeit nicht mehr. Außerhalb der Zeitfenster gilt die normale Heizregelung; verpasste Zeitfenster werden nicht nachgeholt.
+
+Automatik aus schaltet oberen Heizstab und Zirkulationspumpe aus. Beim HA-Start wird nichts geschaltet und die Automatik bleibt aus. Ungültige obere Temperatur oder fehlende erforderliche Rückmeldung deaktivieren die Automatik und lösen Ausschaltversuche aus. Bleibt nach einem Schaltbefehl die Loxone-Rückmeldung länger als 15 Sekunden aus, wird ein Fehler angezeigt und die Automatik bleibt aus. Loxone-Rückmeldungen sind keine Strom- oder Kontaktmessung am externen Hager-Schütz. Bei gestörter Kommunikation kann Home Assistant das physische Abschalten nicht garantieren.
+
+Einstellungen und letzte bestätigte Ausschaltzeit werden gespeichert. Das spätere Boilerbild ist noch nicht enthalten. Vorbereitet und mit simulierten HA-Schnittstellen geprüft; noch kein Test an der realen Heizungsanlage.
+
+Das Speicherbild zeigt den oberen Heizstab und die Beschriftung 4 kW bei bestätigter Ein-Rückmeldung grün. Regler- und Zeitfelder sind platzsparend nebeneinander angeordnet.

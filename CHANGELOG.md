@@ -1,3 +1,16 @@
+# V0.3-Beta1 (0.3.0b1)
+
+- Neuer Brauchwasser Regler mit PyLoxone-Entitäten für Temperaturen und getrennte Relaisrückmeldungen.
+- Nur oberer 4-kW-Heizstab wird geregelt. Untere Temperatur und Relaisstatus werden angezeigt; der untere 7,5-kW-Heizstab wird nicht geschaltet.
+- Einstellbare Zieltemperatur und absolute Wiedereinschalttemperatur. Sperrzeit ab bestätigtem Ausschalten, auch nach externem Ausschalten; Speicherung über Neustarts.
+- Legionellenprogramm nach Wochentagen und Zeit von/bis, ohne vorbelegte Uhrzeit. Hält die obere Zieltemperatur mit derselben Schaltdifferenz, Sperrzeit bleibt vorrangig. Zirkulation während des gesamten Zeitfensters optional.
+- Zirkulations-Zeitfenster mit jeweils eigenen ausgeschriebenen Wochentagen Montag–Sonntag, grünes Plus und rotes Minus ab dem zweiten Fenster. Entfernen erst nach Ja/Nein-Bestätigung.
+- Ungültige obere Temperatur oder fehlende erforderliche Rückmeldung: Automatik aus, Ausschaltbefehle an oberen Heizstab und Pumpe; kein selbstständiger Wiederanlauf. Schaltbefehle werden auf Loxone-Rückmeldung geprüft.
+- Beim Start kein Schaltbefehl, Automatik ausgeschaltet. Vor erster Aktivierung sind gültige Zieltemperatur, Wiedereinschalttemperatur und Sperrzeit zu speichern.
+- Gemeinsamer Schiebeschalter auch beim aufgeklappten Miner-Regler.
+- Boilerbild ist ausdrücklich für später vorgesehen; Platzhalter links, Einstellungen rechts.
+- 74 Backend-Tests und bestehende UI-Verhaltenstests bestanden. Browser-Vorschau prüft Zeitfenster, Entfernen mit Ja/Nein, Formularwerte und mobile 390-Pixel-Ansicht. Keine Schaltbefehle an echte Geräte gesendet; kein HA-Hardwaretest.
+
 # V0.2 (0.2.0) – 15.10.2026
 
 - Der vom Anwender bestätigte funktionierende Stand V0.2-Beta3 wird als stabile Version veröffentlicht.
