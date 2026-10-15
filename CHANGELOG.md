@@ -1,3 +1,11 @@
+# V0.2 (0.2.0) – 15.10.2026
+
+- Der vom Anwender bestätigte funktionierende Stand V0.2-Beta3 wird als stabile Version veröffentlicht.
+- Keine funktionalen Änderungen gegenüber Beta3. Versionsnummer und Oberflächenkennung auf den stabilen Stand gesetzt.
+- Enthält Miner-Grundwasserregelung und unabhängige Modbus-Lüfterregler mit UDP-Ausgabe an Loxone.
+- Geräteanlage über Home Assistant, automatische Übernahme bestehender Beta1-Lüfter, konfigurierbare Spannungsgrenzen und Schnellreaktion.
+- Einheitliche einklappbare Geräteansichten, breite Diagramme mit 15-Minuten-/1-/6-/24-Stunden-Auswahl und geordnete Regler-Einstellungen.
+
 # V0.2-Beta3 (0.2.0b3)
 
 - Lüfter-Regler-Einstellungen wie beim Miner: Temperaturgrenzen, Schrittweite, Pause und Messwertgültigkeit zuerst.
