@@ -22,7 +22,8 @@
         "description": "Wähle den Gerätetyp.",
         "menu_options": {
           "miner": "Miner Ventiel Grundwasser Regler",
-          "fan": "0-10V Lüftersteuerung Loxone"
+          "fan": "0-10V Lüftersteuerung Loxone",
+          "water": "Brauchwasser Regler"
         }
       },
       "fan": {
@@ -40,11 +41,26 @@
           "maximum": "Höchstspannung · V",
           "off_mode": "Bei Automatik aus"
         }
+      },
+      "water": {
+        "title": "Brauchwasser Regler",
+        "description": "Vorhandene PyLoxone-Entitäten auswählen. Nur der obere Heizstab und die Zirkulationspumpe werden geschaltet. Der Regler startet ausgeschaltet; Zieltemperaturen, Sperrzeit und Zeitpläne anschließend im Baustein einstellen. {error}",
+        "data": {
+          "top_temperature": "Temperatur oben",
+          "bottom_temperature": "Temperatur unten",
+          "top_switch": "Heizstab oben · Schalten",
+          "top_feedback": "Heizstab oben · Rückmeldung",
+          "bottom_switch": "Heizstab unten · Referenz, wird nicht geschaltet",
+          "bottom_feedback": "Heizstab unten · Rückmeldung",
+          "pump_switch": "Warmwasserzirkulation · Schalten",
+          "pump_feedback": "Warmwasserzirkulation · Rückmeldung"
+        }
       }
     },
     "error": {
       "invalid_config": "IPv4-Adresse, Port, Befehl und vier eindeutige Miner-IDs prüfen.",
-      "invalid_fan": "Lüfter-Einstellungen prüfen; Details stehen oben."
+      "invalid_fan": "Lüfter-Einstellungen prüfen; Details stehen oben.",
+      "invalid_water": "Entitäten und doppelt verwendete Ausgänge prüfen."
     },
     "abort": {
       "single_instance_allowed": "Es ist bereits ein Regler eingerichtet.",
