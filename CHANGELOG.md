@@ -1,3 +1,12 @@
+# V0.2-Beta3 (0.2.0b3)
+
+- Lüfter-Regler-Einstellungen wie beim Miner: Temperaturgrenzen, Schrittweite, Pause und Messwertgültigkeit zuerst.
+- Eigener Abschnitt Schnellreaktion mit Anstieg, größerem Spannungsschritt, Schaltern und Anzeige der letzten Schnellreaktion.
+- Spannungsgrenzen und Ausschaltverhalten bleiben als zusätzlicher offener Abschnitt verfügbar.
+- Lüftername sowie ESP32- und Loxone-Verbindung in einem separaten, standardmäßig eingeklappten Abschnitt darunter.
+- Beide Speichern-Schaltflächen übernehmen alle bearbeiteten Einstellungen des Lüfters. Bestehende Reglerwerte und Verbindungen bleiben erhalten.
+- UI-Verhaltenstest und Browser-Vorschau mit simulierten Daten geprüft: Speichern bei eingeklappter Verbindung erhält IP und Mindestspannung. Keine Änderung an Regelalgorithmus oder Modbus.
+
 # V0.2-Beta2 (0.2.0b2)
 
 - Geräteanlage über Einstellungen → Geräte & Dienste → Michi´s Steuerung → Gerät hinzufügen, mit Gerätetyp-Auswahl.

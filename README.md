@@ -95,7 +95,7 @@ ESP32 DHT22 Klima: Modbus aktivieren. TCP-Port 502, Geräteadresse 1, Funktion 3
 
 ### Beta installieren
 
-In HACS die Integration öffnen, im Drei-Punkte-Menü Informationen aktualisieren und **Erneut herunterladen** wählen. Falls nötig **Andere Version benötigt? / Need a different version?** öffnen und die Beta im Versionsfeld auswählen. Für automatische Beta-Updates kann der HACS-Schalter **Pre-release** für dieses Repository aktiviert werden. Version **v0.2-Beta2** auswählen, herunterladen und Home Assistant neu starten. Danach bei Bedarf den Browser mit ⌘+Umschalt+R neu laden. Die stabile Version v0.1.2 bleibt als normale Version verfügbar.
+In HACS die Integration öffnen, im Drei-Punkte-Menü Informationen aktualisieren und **Erneut herunterladen** wählen. Falls nötig **Andere Version benötigt? / Need a different version?** öffnen und die Beta im Versionsfeld auswählen. Für automatische Beta-Updates kann der HACS-Schalter **Pre-release** für dieses Repository aktiviert werden. Version **v0.2-Beta3** auswählen, herunterladen und Home Assistant neu starten. Danach bei Bedarf den Browser mit ⌘+Umschalt+R neu laden. Die stabile Version v0.1.2 bleibt als normale Version verfügbar.
 
 Die Beta2 ist mit 58 automatisierten Prüfungen und einer Browser-Vorschau mit simulierten Messwerten geprüft. Ein Test in einer echten Home-Assistant-Installation und mit dem ESP32/Loxone wurde hier nicht durchgeführt.
 
@@ -107,3 +107,8 @@ Miner und Lüfter verwenden dieselbe Ausrichtung der Temperatur, Spannung und Sc
 Jedes Diagramm hat eine eigene Zeitwahl: 15 Minuten, 1 Stunde, 6 Stunden oder 24 Stunden. Bis zu 24 Stunden Verlauf werden ab Start im Arbeitsspeicher gesammelt. Ein Update oder Neustart beginnt den Verlauf neu. Bei langen Zeiträumen reduziert die Übertragung die Zahl der Punkte und erhält dabei Spitzen und Messlücken. UDP-Stellwerte sind keine gemessene Ventilposition oder Lüfterdrehzahl.
 
 Die Übernahme von Beta1 speichert die vorhandenen Einstellungen pro Lüfter in einem eigenen Speicher. Sie verändert weder den eingestellten Temperaturbereich noch die Loxone-Befehle. Wie bisher startet keine Automatik von selbst.
+
+
+## Lüfteransicht ab Beta3
+
+Die Lüfter-Reglerwerte sind wie beim Miner in normale Einstellungen und Schnellreaktion gegliedert. Darunter stehen Spannungsgrenzen und Ausschaltverhalten. Name, ESP32 und Loxone-Verbindung sind im separaten Abschnitt **Lüfter-Name, ESP32 & Loxone-Verbindung** einklappbar. Beide Speichern-Schaltflächen übernehmen sämtliche bearbeiteten Lüfter-Einstellungen. Die Regelung bleibt unverändert.
