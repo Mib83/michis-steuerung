@@ -1,7 +1,7 @@
 {
   "domain": "michis_steuerung",
   "name": "Michi´s Steuerung",
-  "version": "0.2.0b1",
+  "version": "0.2.0b2",
   "config_flow": true,
   "documentation": "https://github.com/Mib83/michis-steuerung",
   "dependencies": [

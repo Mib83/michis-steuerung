@@ -4,6 +4,9 @@ import ipaddress
 import time
 from datetime import timedelta
 from types import SimpleNamespace
+from homeassistant.helpers.storage import Store
+from .const import DOMAIN
+from .history import chart_history
 from homeassistant.helpers.event import async_track_time_interval
 from . import Controller
 from .const import DEFAULTS
@@ -59,6 +62,8 @@ class FanController(Controller):
         super().__init__(parent.hass, entry)
         self.settings = dict(FAN_DEFAULTS)
         self.output = self.config['minimum']
+        self.config_entry = None
+        self.fan_store = Store(self.hass, 1, f'{DOMAIN}.fan.{fan_id}')
         self.measurement = None
         self.sensor_error = None
         self.stopping = False
@@ -80,7 +85,9 @@ class FanController(Controller):
             'output': self.output, 'last_sent_output': self.last_sent_output}
 
     async def save(self):
-        await self.parent.save()
+        await self.fan_store.async_save(self.serialized())
+        if self.config_entry and self.config_entry.title != self.config['name']:
+            self.hass.config_entries.async_update_entry(self.config_entry, title=self.config['name'])
 
     async def start(self):
         self.enabled = False
@@ -107,7 +114,7 @@ class FanController(Controller):
     def temperature_revision(self):
         return self.measurement[2] if self.measurement else None
 
-    def snapshot(self):
+    def snapshot(self, history_seconds=3600):
         now = time.monotonic()
         ready = self.measurement is not None and now - self.measurement[2] <= self.settings['stale']
         temperature = self.measurement[0] if ready else None
@@ -131,7 +138,7 @@ class FanController(Controller):
             'ready': ready, 'output': self.output, 'sent_output': self.last_sent_output,
             'enabled': self.enabled, 'remaining': round(remaining, 1), 'status': status,
             'sensor_error': self.sensor_error, 'last_message': self.last_message,
-            'history': list(self.history), 'fast_pending': self.pending_jump is not None,
+            'history': chart_history(self.history, history_seconds), 'fast_pending': self.pending_jump is not None,
             'last_fast_event': self.last_fast_event}
 
     async def send(self, value):

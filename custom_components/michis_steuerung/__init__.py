@@ -15,6 +15,7 @@ from homeassistant.core import callback
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.storage import Store
 from .const import DEFAULTS, DOMAIN, NAME, VERSION, UI_BUILD, LEGACY_DOMAIN, CONTROLLER_NAME
+from .history import chart_history, PERIODS
 from .engine import finite, next_output, validate_settings, validate_sources
 
 class Controller:
@@ -24,7 +25,7 @@ class Controller:
         self.output = 4.0
         self.enabled = False
         self.samples = {}
-        self.history = deque(maxlen=720)
+        self.history = deque(maxlen=17281)
         self.last_sent = None
         self.last_message = None
         self.last_sent_output = None
@@ -40,6 +41,7 @@ class Controller:
         self.unsubscribers = []
         self.mqtt_unsubscribers = []
         self.fans = {}
+        self.legacy_fans = []
         self.sources = [{'name': miner.upper().replace('_', '-'),
             'base': f"{entry.data['prefix']}/{miner}",
             'labels': [f'Slot {i}' for i in range(4)]}
@@ -66,19 +68,7 @@ class Controller:
                 self.sources = validate_sources(saved['sources'])
             except (ValueError, TypeError):
                 pass
-        from .fan import FanController
-        for item in (saved or {}).get('fans', []):
-            try:
-                fan_id = item['id']
-                if not isinstance(fan_id, str) or not fan_id or fan_id in self.fans:
-                    raise ValueError('Ungültige Lüfter-ID')
-                fan = FanController(self, fan_id, item['config'], item)
-                self.validate_fan_target(fan.config, fan_id)
-                self.fans[fan_id] = fan
-                await fan.start()
-            except (ValueError, KeyError, TypeError):
-                # Preserve invalid stored definitions until the user repairs them.
-                raise ValueError('Gespeicherter Lüfter konnte nicht geladen werden') from None
+        self.legacy_fans = (saved or {}).get('fans', [])
         # Every startup deliberately requires manual enable; no startup UDP output.
         self.enabled = False
         await self.subscribe_sources(self.sources)
@@ -117,7 +107,7 @@ class Controller:
         self.samples.clear()
         self.reset_jump_detection()
 
-    def snapshot(self):
+    def snapshot(self, history_periods=None):
         now = time.monotonic()
         miners, valid = [], []
         for source in self.sources:
@@ -149,14 +139,14 @@ class Controller:
             status = 'Kühlung reduzieren' if self.output > 0 else 'Untergrenze 0 V erreicht'
         else:
             status = 'Temperatur im gewünschten Bereich'
-        return {'fans': [fan.snapshot() for fan in self.fans.values()], 'fast_pending': self.pending_jump is not None, 'last_fast_event': self.last_fast_event, 'sources': self.sources, 'settings': self.settings, 'output': self.output, 'enabled': self.enabled,
+        return {'fans': [fan.snapshot((history_periods or {}).get(fan.fan_id, 3600)) for fan in self.fans.values()], 'fast_pending': self.pending_jump is not None, 'last_fast_event': self.last_fast_event, 'sources': self.sources, 'settings': self.settings, 'output': self.output, 'enabled': self.enabled,
             'miners': miners, 'maximum': maximum, 'ready': ready, 'valid_count': len(valid),
             'remaining': round(remaining,1), 'status': status,
             'last_message': self.last_message, 'sent_output': self.last_sent_output, 'last_error': self.last_error,
-            'history': list(self.history), 'target': f"{self.entry.data['host']}:{self.entry.data['port']}", 'version': VERSION}
+            'history': chart_history(self.history, (history_periods or {}).get('miner', 3600)), 'target': f"{self.entry.data['host']}:{self.entry.data['port']}", 'version': VERSION}
 
     async def save(self):
-        await self.store.async_save({'settings': self.settings, 'output': self.output, 'last_sent_output': self.last_sent_output, 'sources': self.sources, 'fans': [fan.serialized() for fan in self.fans.values()]})
+        await self.store.async_save({'settings': self.settings, 'output': self.output, 'last_sent_output': self.last_sent_output, 'sources': self.sources, 'fans': self.legacy_fans})
 
     def output_limits(self):
         return 0, 10
@@ -170,21 +160,11 @@ class Controller:
                 raise ValueError('Dieses UDP-Ziel mit Befehlsname wird bereits von einem Lüfter verwendet')
 
     async def fan_action(self, action, value):
-        from .fan import FanController
-        if action == 'fan_add':
-            async with self.lock:
-                if len(self.fans) >= 20:
-                    raise ValueError('Maximal 20 Lüfter möglich')
-                fan_id = uuid.uuid4().hex
-                fan = FanController(self, fan_id, value)
-                self.validate_fan_target(fan.config)
-                self.fans[fan_id] = fan
-                await fan.start()
-                await self.save()
-        else:
-            if not isinstance(value, dict) or value.get('id') not in self.fans:
-                raise ValueError('Lüfter nicht gefunden')
-            await self.fans[value['id']].command(value.get('action'), value.get('value'))
+        if action != 'fan_command':
+            raise ValueError('Neue Geräte bitte unter Einstellungen → Geräte & Dienste hinzufügen')
+        if not isinstance(value, dict) or value.get('id') not in self.fans:
+            raise ValueError('Lüfter nicht gefunden')
+        await self.fans[value['id']].command(value.get('action'), value.get('value'))
         return self.snapshot()
 
     async def send(self, value):
@@ -332,7 +312,7 @@ class Controller:
             self.enabled = False
             await self.save()
 
-@websocket_api.websocket_command({'type': f'{DOMAIN}/state'})
+@websocket_api.websocket_command({'type': f'{DOMAIN}/state', vol.Optional('history_periods'): dict})
 @websocket_api.require_admin
 @websocket_api.async_response
 async def ws_state(hass, connection, msg):
@@ -340,7 +320,11 @@ async def ws_state(hass, connection, msg):
     if controller is None:
         connection.send_error(msg['id'], 'not_ready', 'Integration noch nicht eingerichtet')
         return
-    connection.send_result(msg['id'], controller.snapshot())
+    periods = msg.get('history_periods', {})
+    if any(isinstance(v, bool) or v not in PERIODS for v in periods.values()):
+        connection.send_error(msg['id'], 'invalid_value', 'Ungültiger Diagrammzeitraum')
+        return
+    connection.send_result(msg['id'], controller.snapshot(periods))
 
 @websocket_api.websocket_command({'type': f'{DOMAIN}/command', vol.Required('action'): str, vol.Required('value'): object})
 @websocket_api.require_admin
@@ -368,6 +352,8 @@ async def async_setup(hass, config):
     return True
 
 async def async_setup_entry(hass, entry):
+    if entry.data.get('kind') == 'fan':
+        return await setup_fan_entry(hass, entry)
     legacy_id = entry.data.get('legacy_entry_id')
     if legacy_id:
         legacy = hass.config_entries.async_get_entry(legacy_id)
@@ -382,18 +368,86 @@ async def async_setup_entry(hass, entry):
         await controller.start()
         await controller.save()
         await panel_custom.async_register_panel(hass,
-            frontend_url_path=DOMAIN, webcomponent_name='michis-steuerung-panel-020b1',
+            frontend_url_path=DOMAIN, webcomponent_name='michis-steuerung-panel-020b2',
             sidebar_title=NAME, sidebar_icon='mdi:coolant-temperature',
             module_url=f'/{DOMAIN}/panel.js?v={UI_BUILD}', require_admin=True)
     except Exception:
         await controller.stop()
         raise
     hass.data[DOMAIN]['controller'] = controller
+    # Convert Beta1 stored fan definitions to independently managed HA entries.
+    try:
+        await migrate_legacy_fans(hass, controller)
+    except Exception:
+        hass.data[DOMAIN].pop('controller', None)
+        await controller.stop()
+        frontend.async_remove_panel(hass, DOMAIN)
+        raise
+    # A parent reload replaces the runtime; reload previously running child entries.
+    for child_id, fan in list(hass.data[DOMAIN].get('fan_entries', {}).items()):
+        if fan.parent is not controller:
+            hass.async_create_task(hass.config_entries.async_reload(child_id))
     return True
 
 async def async_unload_entry(hass, entry):
+    if entry.data.get('kind') == 'fan':
+        fan = hass.data[DOMAIN].get('fan_entries', {}).pop(entry.entry_id, None)
+        if fan:
+            await fan.stop()
+            if fan.parent.fans.get(fan.fan_id) is fan:
+                fan.parent.fans.pop(fan.fan_id, None)
+        return True
     controller = hass.data[DOMAIN].pop('controller', None)
     if controller:
         await controller.stop()
     frontend.async_remove_panel(hass, DOMAIN)
     return True
+
+
+async def setup_fan_entry(hass, entry):
+    from homeassistant.exceptions import ConfigEntryNotReady
+    from .fan import FanController
+    parent = hass.data[DOMAIN].get('controller')
+    if parent is None:
+        raise ConfigEntryNotReady('Michi´s Steuerung wird noch gestartet')
+    fan_id = entry.data['fan_id']
+    if fan_id in parent.fans:
+        return True
+    if len(parent.fans) >= 20:
+        raise ValueError('Maximal 20 aktive Lüfter möglich')
+    saved = await Store(hass, 1, f'{DOMAIN}.fan.{fan_id}').async_load()
+    initial = saved or entry.data.get('initial')
+    config = initial['config'] if initial else entry.data['config']
+    parent.validate_fan_target(config, fan_id)
+    fan = FanController(parent, fan_id, config, initial)
+    fan.config_entry = entry
+    parent.fans[fan_id] = fan
+    try:
+        await fan.save()
+        await fan.start()
+    except Exception:
+        parent.fans.pop(fan_id, None)
+        await fan.stop()
+        raise
+    hass.data[DOMAIN].setdefault('fan_entries', {})[entry.entry_id] = fan
+    return True
+
+
+async def async_remove_entry(hass, entry):
+    if entry.data.get('kind') == 'fan':
+        await Store(hass, 1, f"{DOMAIN}.fan.{entry.data['fan_id']}").async_remove()
+
+
+async def migrate_legacy_fans(hass, controller):
+    if not controller.legacy_fans:
+        return
+    for saved in controller.legacy_fans:
+        existing = hass.config_entries.async_entries(DOMAIN)
+        if any(e.data.get('kind') == 'fan' and e.data.get('fan_id') == saved['id'] for e in existing):
+            continue
+        result = await hass.config_entries.flow.async_init(DOMAIN, context={'source': 'import'},
+            data={'kind': 'fan', 'fan_id': saved['id'], 'config': saved['config'], 'initial': saved})
+        if result['type'] != 'create_entry' and not (result['type'] == 'abort' and result.get('reason') == 'already_configured'):
+            raise ValueError('Vorhandener Lüfter konnte nicht übernommen werden; Quelldaten bleiben erhalten')
+    controller.legacy_fans = []
+    await controller.save()
