@@ -610,6 +610,9 @@ class WaterTests(unittest.IsolatedAsyncioTestCase):
     async def test_unit_conversion_unknown_and_invalid_feedback(self):
         parse=self.water_module.state_temperature
         self.assertAlmostEqual(parse(types.SimpleNamespace(state='122',attributes={'unit_of_measurement':'°F'})),50)
+        for value in ('36.5625','27.8125'):
+            self.assertEqual(parse(types.SimpleNamespace(state=value,attributes={'unit_of_measurement':'°'})),float(value))
+        self.assertIsNone(parse(types.SimpleNamespace(state='36.5625',attributes={'unit_of_measurement':'%'})))
         for value in ['unknown','unavailable','nan','9999']:
             self.assertIsNone(parse(types.SimpleNamespace(state=value,attributes={})))
         self.assertIsNone(self.water_module.state_binary(types.SimpleNamespace(state='unknown')))
