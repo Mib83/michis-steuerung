@@ -22,7 +22,8 @@ def state_temperature(state):
             value = (value-32)*5/9
         elif unit == 'K':
             value -= 273.15
-        elif unit not in (None,'°C','C'):
+        # PyLoxone analog temperature sensors may report a bare degree sign.
+        elif unit not in (None,'°C','C','°'):
             return None
         return value if 0 <= value <= 110 else None
     except (ValueError,TypeError):
