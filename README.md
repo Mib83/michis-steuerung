@@ -85,7 +85,7 @@ Nicht beide Regler gleichzeitig einschalten. Die Übernahme ist lokal mit simuli
 
 ## V0.2-Beta1: zusätzliche Lüfter
 
-Die Beta ergänzt frei benennbare Lüfter unter **Michi´s Steuerung → Lüfter hinzufügen**. ESP32-IP, Loxone-IP, UDP-Port und einen eigenen Befehlsnamen eingeben, z. B. `Luefter:`. In Loxone muss der dazu passende virtuelle UDP-Eingang angelegt und mit dem Lüfterausgang verbunden werden. Mehr Spannung bedeutet mehr Kühlung.
+Seit Beta2 werden frei benennbare Lüfter unter **Einstellungen → Geräte & Dienste → Michi´s Steuerung → Gerät hinzufügen → 0-10V Lüftersteuerung Loxone** angelegt. Der Miner-Regler muss zuerst eingerichtet und geladen sein. Vorhandene Beta1-Lüfter werden automatisch übernommen und erscheinen als eigene Einträge; nicht erneut anlegen. ESP32-IP, Loxone-IP, UDP-Port und einen eigenen Befehlsnamen eingeben, z. B. `Luefter:`. In Loxone muss der dazu passende virtuelle UDP-Eingang angelegt und mit dem Lüfterausgang verbunden werden. Mehr Spannung bedeutet mehr Kühlung.
 
 Standardwerte: 27–28 °C, mindestens 2 V, höchstens 10 V, normale Schrittweite 0,2 V, Wartezeit 120 Sekunden. Unter **Einstellungen & Verbindung** sind Name, Grenzen, Wartezeit, Schnellreaktion und Verbindungen anpassbar. Verbindung und Spannungsgrenzen nur bei ausgeschalteter Automatik ändern; reine Reglerwerte können im Betrieb angepasst werden.
 
@@ -95,6 +95,15 @@ ESP32 DHT22 Klima: Modbus aktivieren. TCP-Port 502, Geräteadresse 1, Funktion 3
 
 ### Beta installieren
 
-In HACS die Integration öffnen, im Drei-Punkte-Menü Informationen aktualisieren und **Erneut herunterladen** wählen. Falls nötig **Andere Version benötigt? / Need a different version?** öffnen und die Beta im Versionsfeld auswählen. Für automatische Beta-Updates kann der HACS-Schalter **Pre-release** für dieses Repository aktiviert werden. Version **v0.2-Beta1** auswählen, herunterladen und Home Assistant neu starten. Danach bei Bedarf den Browser mit ⌘+Umschalt+R neu laden. Die stabile Version v0.1.2 bleibt als normale Version verfügbar.
+In HACS die Integration öffnen, im Drei-Punkte-Menü Informationen aktualisieren und **Erneut herunterladen** wählen. Falls nötig **Andere Version benötigt? / Need a different version?** öffnen und die Beta im Versionsfeld auswählen. Für automatische Beta-Updates kann der HACS-Schalter **Pre-release** für dieses Repository aktiviert werden. Version **v0.2-Beta2** auswählen, herunterladen und Home Assistant neu starten. Danach bei Bedarf den Browser mit ⌘+Umschalt+R neu laden. Die stabile Version v0.1.2 bleibt als normale Version verfügbar.
 
-Die Beta ist mit 50 automatisierten Prüfungen und einer Browser-Vorschau mit simulierten Messwerten geprüft. Ein Test in einer echten Home-Assistant-Installation und mit dem ESP32/Loxone wurde hier nicht durchgeführt.
+Die Beta2 ist mit 58 automatisierten Prüfungen und einer Browser-Vorschau mit simulierten Messwerten geprüft. Ein Test in einer echten Home-Assistant-Installation und mit dem ESP32/Loxone wurde hier nicht durchgeführt.
+
+
+## Diagramme und breite Regler in Beta2
+
+Miner und Lüfter verwenden dieselbe Ausrichtung der Temperatur, Spannung und Schalter. Im aufgeklappten Baustein folgt auf die Messwertkarten ein Diagramm über die ganze verfügbare Breite. Die Regler-Einstellungen stehen offen direkt darunter.
+
+Jedes Diagramm hat eine eigene Zeitwahl: 15 Minuten, 1 Stunde, 6 Stunden oder 24 Stunden. Bis zu 24 Stunden Verlauf werden ab Start im Arbeitsspeicher gesammelt. Ein Update oder Neustart beginnt den Verlauf neu. Bei langen Zeiträumen reduziert die Übertragung die Zahl der Punkte und erhält dabei Spitzen und Messlücken. UDP-Stellwerte sind keine gemessene Ventilposition oder Lüfterdrehzahl.
+
+Die Übernahme von Beta1 speichert die vorhandenen Einstellungen pro Lüfter in einem eigenen Speicher. Sie verändert weder den eingestellten Temperaturbereich noch die Loxone-Befehle. Wie bisher startet keine Automatik von selbst.

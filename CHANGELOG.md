@@ -1,3 +1,14 @@
+# V0.2-Beta2 (0.2.0b2)
+
+- Geräteanlage über Einstellungen → Geräte & Dienste → Michi´s Steuerung → Gerät hinzufügen, mit Gerätetyp-Auswahl.
+- Vorhandene Beta1-Lüfter werden automatisch in eigene Home-Assistant-Konfigurationseinträge übernommen. Jeder Lüfter speichert seine Einstellungen separat und kann einzeln neu geladen, deaktiviert oder entfernt werden.
+- Hinzufügen-Formular aus der Bedienübersicht entfernt.
+- Gleiche Spalten für Miner und Lüfter; Schalterbreite gegen Schrumpfen abgesichert, damit der Schaltknopf nicht aus seiner Fläche rutscht.
+- Diagramm und darunter offen sichtbare Regler-Einstellungen über die volle Breite bei beiden Gerätetypen.
+- Diagrammzeitraum 15 Minuten / 1 Stunde / 6 Stunden / 24 Stunden, jeweils getrennt wählbar. Bis 24 Stunden Messwerte im Arbeitsspeicher seit Start; keine erfundene Vergangenheit und keine Speicherung über Neustarts.
+- Breite Zeichenfläche statt festem schmalem Seitenverhältnis; Temperatur- und Stellwertspitzen sowie Messlücken bleiben bei der Datenreduktion erhalten.
+- 58 Backend-Prüfungen und bestehende UI-Verhaltenstests bestanden. Browser-Vorschau mit simulierten Daten: gleiche Ausrichtung, Schalter ein/aus, Zeitwahl und 390-Pixel-Ansicht ohne seitlichen Überlauf geprüft. Keine Prüfung in echtem Home Assistant/ESP32/Loxone.
+
 # Änderungen
 
 ## V0.2-Beta1 (0.2.0b1)
