@@ -66,11 +66,11 @@ node tests/test_ui.cjs
 Fehler und Verbesserungen bitte unter [Issues](https://github.com/Mib83/michis-steuerung/issues) melden. Eine Open-Source-Lizenz ist noch nicht festgelegt.
 
 
-## V0.3-Beta1 – Brauchwasser Regler
+## V0.3-Beta4 – Brauchwasser Regler
 
-Die neue Version ist als Vorabversion V0.3-Beta1 verfügbar. Unter Gerät hinzufügen steht **Brauchwasser Regler** zur Verfügung. Die im Einrichtungsdialog vorbelegten PyLoxone-Entitäten müssen zur Anlage passen. Die zwei Temperatursensoren und Relaisrückmeldungen werden direkt aus Home Assistant gelesen. Schalten erfolgt über die vorhandenen `switch.turn_on`/`switch.turn_off`-Aktionen; zusätzlicher UDP-Transport ist nicht erforderlich.
+Die neue Version ist als Vorabversion V0.3-Beta4 verfügbar. Unter Gerät hinzufügen steht **Brauchwasser Regler** zur Verfügung. Die im Einrichtungsdialog vorbelegten PyLoxone-Entitäten müssen zur Anlage passen. Die zwei Temperatursensoren und Relaisrückmeldungen werden direkt aus Home Assistant gelesen. Schalten erfolgt über die vorhandenen `switch.turn_on`/`switch.turn_off`-Aktionen; zusätzlicher UDP-Transport ist nicht erforderlich.
 
-Nur der obere Heizstab wird im Normalbetrieb und Legionellenprogramm geregelt. Der untere Heizstab wird niemals geschaltet. Zieltemperatur oben, Wiedereinschalten ab und Sperrzeit sind zunächst leer und müssen vor dem Aktivieren gespeichert werden. Ausschalten erfolgt bei Erreichen der Zieltemperatur. Wiedereinschalten erfolgt bei oder unter der eingestellten Wiedereinschalttemperatur, sobald die Sperrzeit abgelaufen ist. Die Sperrzeit beginnt mit bestätigtem Ausschalten über die obere binäre Rückmeldung. Ist nach erstmaligem Start keine frühere Ausschaltzeit bekannt und das Relais aus, beginnt vorsichtshalber die konfigurierte Sperrzeit.
+Nur der obere Heizstab wird im Normalbetrieb und Legionellenprogramm geregelt. Der untere 7,5-kW-Heizstab kann separat über einen manuellen Timer eingeschaltet werden. Zieltemperatur oben, Wiedereinschalten ab und Sperrzeit sind zunächst leer und müssen vor dem Aktivieren gespeichert werden. Ausschalten erfolgt bei Erreichen der Zieltemperatur. Wiedereinschalten erfolgt bei oder unter der eingestellten Wiedereinschalttemperatur, sobald die Sperrzeit abgelaufen ist. Die Sperrzeit beginnt mit bestätigtem Ausschalten über die obere binäre Rückmeldung. Ist nach erstmaligem Start keine frühere Ausschaltzeit bekannt und das Relais aus, beginnt vorsichtshalber die konfigurierte Sperrzeit.
 
 Im Legionellen-Zeitfenster gilt die gesonderte Zieltemperatur. Die normale Schaltdifferenz (Zieltemperatur minus Wiedereinschalttemperatur) wird auf diese Zieltemperatur übertragen. Die Sperrzeit wird auch dabei eingehalten. Dies ist eine Regelung des oberen Fühlers/Heizstabs; es erfolgt keine automatische Prüfung oder Bestätigung einer hygienischen Wirksamkeit für den gesamten Speicher oder Leitungen. Zieltemperatur und Zeitfenster haben keine vorgegebenen Werte. Bei gesetztem Pumpen-Häkchen läuft die Zirkulation während des gesamten Legionellen-Zeitfensters.
 
@@ -81,3 +81,9 @@ Automatik aus schaltet oberen Heizstab und Zirkulationspumpe aus. Beim HA-Start 
 Einstellungen und letzte bestätigte Ausschaltzeit werden gespeichert. Das spätere Boilerbild ist noch nicht enthalten. Vorbereitet und mit simulierten HA-Schnittstellen geprüft; noch kein Test an der realen Heizungsanlage.
 
 Das Speicherbild zeigt den oberen Heizstab und die Beschriftung 4 kW bei bestätigter Ein-Rückmeldung grün. Regler- und Zeitfelder sind platzsparend nebeneinander angeordnet.
+
+### Timer Heizstab 7,5 kW (Beta4)
+
+Stunden (0–23) und Minuten (0–59) wählen und Start drücken. Mindestens eine Minute, maximal 23 Stunden 59 Minuten. Der Timer läuft unabhängig vom oberen Automatikschalter; beide Heizstäbe dürfen gleichzeitig laufen. Keine Sperrzeit unten. Stopp oder Zeitablauf sendet AUS; die grüne Anzeige folgt ausschließlich der binären Rückmeldung. Die Laufzeit beginnt mit Start. Nach einem HA-Neustart wird ein unterbrochener Timer nicht fortgesetzt, sondern AUS gesendet und bis zur Rückmeldung wiederholt. Während HA ausgeschaltet oder Loxone nicht erreichbar ist, kann die Integration keinen Abschaltzeitpunkt garantieren.
+
+Beta4: 82 Backend-Tests bestanden, Browser-Vorschau auf Desktop und schmalem Bildschirm geprüft. Kein Test mit realen Heizstäben und kein direkter Test in der Mac-App oder Firefox.

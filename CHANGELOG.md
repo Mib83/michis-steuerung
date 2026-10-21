@@ -1,3 +1,17 @@
+# V0.3-Beta4 (0.3.0b4)
+
+- Unterer 7,5-kW-Heizstab mit Stunden-/Minuten-Zahlenrädern, Start, Stopp und Restzeit.
+- Unabhängiger Timer, gleichzeitiger Betrieb beider Heizstäbe erlaubt, keine Sperrzeit unten.
+- Unterer Heizstab und Beschriftung werden bei bestätigter Rückmeldung grün.
+- Einheitliche Spalten für Temperatur, Stellwert und Automatik in allen Gerätezeilen.
+- Einheitlichere Zeitfelder und Checkboxen; feste Spalte für Plus ohne Überlappung.
+- 82 simulierte Backend-Tests bestanden; Timer-Recovery und Abschaltfehler geprüft.
+
+# V0.3-Beta2 (0.3.0b2)
+
+- PyLoxone-Temperatursensoren mit Einheit „°“ werden als Celsius übernommen.
+- Regression mit den gemeldeten Werten 36.5625 und 27.8125 geprüft; 74 Tests bestanden.
+
 # V0.3-Beta1 (0.3.0b1)
 
 - Neuer Brauchwasser Regler mit PyLoxone-Entitäten für Temperaturen und getrennte Relaisrückmeldungen.
