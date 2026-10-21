@@ -1,6 +1,6 @@
 # Michi´s Steuerung
 
-Stabile Version **V0.2 (0.2.0)** für Home Assistant. Eine lokale Steuerung für wassergekühlte Miner und 0–10-V-Lüfter über Loxone. V0.2 entspricht funktional dem vom Anwender bestätigten Beta3-Stand.
+Stabile Version **V0.3 (0.3.0)** für Home Assistant. Eine lokale Steuerung für wassergekühlte Miner und 0–10-V-Lüfter über Loxone. V0.2 entspricht funktional dem vom Anwender bestätigten Beta3-Stand.
 
 ## Funktionen
 
@@ -25,7 +25,7 @@ Home Assistant Core **2026.10.1 oder neuer** und eine eingerichtete MQTT-Integra
 4. **Einstellungen → Geräte & Dienste → Integration hinzufügen → Michi´s Steuerung** öffnen und den Miner-Regler einrichten.
 5. Weitere Lüfter über **Gerät hinzufügen → 0-10V Lüftersteuerung Loxone** anlegen.
 
-Für ein Update in HACS **Informationen aktualisieren → Erneut herunterladen** wählen und Version **v0.2.0** installieren. Home Assistant vollständig neu starten; bei Bedarf Browser mit **⌘+Umschalt+R** neu laden. Bestehende Integration und Geräte behalten. Nach dem Neustart die gewünschten Automatiken wieder einschalten.
+Für ein Update in HACS **Informationen aktualisieren → Erneut herunterladen** wählen und Version **v0.3.0** installieren. Home Assistant vollständig neu starten; bei Bedarf Browser mit **⌘+Umschalt+R** neu laden. Bestehende Integration und Geräte behalten. Nach dem Neustart die gewünschten Automatiken wieder einschalten.
 
 Manuell: `custom_components/michis_steuerung` in das Home-Assistant-Konfigurationsverzeichnis kopieren und Home Assistant neu starten.
 
@@ -66,9 +66,9 @@ node tests/test_ui.cjs
 Fehler und Verbesserungen bitte unter [Issues](https://github.com/Mib83/michis-steuerung/issues) melden. Eine Open-Source-Lizenz ist noch nicht festgelegt.
 
 
-## V0.3-Beta4 – Brauchwasser Regler
+## V0.3 – Brauchwasser Regler
 
-Die neue Version ist als Vorabversion V0.3-Beta4 verfügbar. Unter Gerät hinzufügen steht **Brauchwasser Regler** zur Verfügung. Die im Einrichtungsdialog vorbelegten PyLoxone-Entitäten müssen zur Anlage passen. Die zwei Temperatursensoren und Relaisrückmeldungen werden direkt aus Home Assistant gelesen. Schalten erfolgt über die vorhandenen `switch.turn_on`/`switch.turn_off`-Aktionen; zusätzlicher UDP-Transport ist nicht erforderlich.
+Die neue Version ist als stabile Version V0.3 verfügbar. Unter Gerät hinzufügen steht **Brauchwasser Regler** zur Verfügung. Die im Einrichtungsdialog vorbelegten PyLoxone-Entitäten müssen zur Anlage passen. Die zwei Temperatursensoren und Relaisrückmeldungen werden direkt aus Home Assistant gelesen. Schalten erfolgt über die vorhandenen `switch.turn_on`/`switch.turn_off`-Aktionen; zusätzlicher UDP-Transport ist nicht erforderlich.
 
 Nur der obere Heizstab wird im Normalbetrieb und Legionellenprogramm geregelt. Der untere 7,5-kW-Heizstab kann separat über einen manuellen Timer eingeschaltet werden. Zieltemperatur oben, Wiedereinschalten ab und Sperrzeit sind zunächst leer und müssen vor dem Aktivieren gespeichert werden. Ausschalten erfolgt bei Erreichen der Zieltemperatur. Wiedereinschalten erfolgt bei oder unter der eingestellten Wiedereinschalttemperatur, sobald die Sperrzeit abgelaufen ist. Die Sperrzeit beginnt mit bestätigtem Ausschalten über die obere binäre Rückmeldung. Ist nach erstmaligem Start keine frühere Ausschaltzeit bekannt und das Relais aus, beginnt vorsichtshalber die konfigurierte Sperrzeit.
 
@@ -87,3 +87,7 @@ Das Speicherbild zeigt den oberen Heizstab und die Beschriftung 4 kW bei bestät
 Stunden (0–23) und Minuten (0–59) wählen und Start drücken. Mindestens eine Minute, maximal 23 Stunden 59 Minuten. Der Timer läuft unabhängig vom oberen Automatikschalter; beide Heizstäbe dürfen gleichzeitig laufen. Keine Sperrzeit unten. Stopp oder Zeitablauf sendet AUS; die grüne Anzeige folgt ausschließlich der binären Rückmeldung. Die Laufzeit beginnt mit Start. Nach einem HA-Neustart wird ein unterbrochener Timer nicht fortgesetzt, sondern AUS gesendet und bis zur Rückmeldung wiederholt. Während HA ausgeschaltet oder Loxone nicht erreichbar ist, kann die Integration keinen Abschaltzeitpunkt garantieren.
 
 Beta4: 82 Backend-Tests bestanden, Browser-Vorschau auf Desktop und schmalem Bildschirm geprüft. Kein Test mit realen Heizstäben und kein direkter Test in der Mac-App oder Firefox.
+
+### Unabhängiger Legionellenschutz (V0.3)
+
+Der eigene Schiebeschalter wird mit Einstellungen speichern übernommen. Der Zeitplan arbeitet unabhängig vom oberen Normalautomatikschalter; Zieltemperatur, Wochentage, Zeitfenster und optionale Pumpe gelten unverändert. Bei ausgeschalteter Normalautomatik wird nach Ende des Zeitfensters ausgeschaltet. Die Sperrzeit bleibt vorrangig. Der gespeicherte aktivierte Legionellenplan bleibt nach einem HA-Neustart aktiv; die Normalautomatik startet aus. Fehler stoppen die Regelung bis zur bewussten erneuten Aktivierung bzw. Übernahme geprüfter Einstellungen.

@@ -1,3 +1,10 @@
+# V0.3 (0.3.0)
+
+- Legionellenschutz mit eigenem Schiebeschalter, unabhängig von der normalen Warmwasser-Automatik.
+- Gespeicherter Legionellen-Zeitplan bleibt auch nach HA-Neustart aktiv; Normalautomatik startet weiterhin aus.
+- Sperrzeit und Relaisrückmeldung gelten weiterhin. Außerhalb des Legionellenfensters kein normales Heizen bei ausgeschalteter Normalautomatik.
+- 86 simulierte Backend-Tests bestanden.
+
 # V0.3-Beta4 (0.3.0b4)
 
 - Unterer 7,5-kW-Heizstab mit Stunden-/Minuten-Zahlenrädern, Start, Stopp und Restzeit.
