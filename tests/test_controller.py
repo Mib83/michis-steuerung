@@ -607,6 +607,69 @@ class WaterTests(unittest.IsolatedAsyncioTestCase):
         other=self.water_module.WaterController(self.parent,self.entry);other.store.data=self.c.store.data
         await other.start();self.assertFalse(other.enabled);self.assertGreater(other.remaining(),119);self.assertEqual(other.settings['restart_top'],45)
         await other.stop();self.assertEqual(self.calls,[])
+    async def test_timer_start_expire_and_confirm_off(self):
+        await self.c.command('timer_start',{'hours':0,'minutes':1})
+        self.assertTrue(self.c.store.data['timer_owned'])
+        self.assertEqual(self.calls[-1],('switch','turn_on',self.c.entities['bottom_switch']))
+        self.feedback('bottom_feedback','on');await self.c.tick(None)
+        self.assertTrue(self.c.snapshot()['timer_active'])
+        self.c.timer_deadline=time.monotonic()-1;await self.c.tick(None)
+        self.assertEqual(self.calls[-1][1],'turn_off');self.assertTrue(self.c.snapshot()['timer_stopping'])
+        self.feedback('bottom_feedback','off');await self.c.tick(None)
+        self.assertFalse(self.c.timer_owned);self.assertFalse(self.c.store.data['timer_owned'])
+    async def test_timer_stop_without_lockout_and_restart(self):
+        await self.c.command('timer_start',{'hours':1,'minutes':2})
+        self.feedback('bottom_feedback','on');await self.c.tick(None)
+        await self.c.command('timer_stop',None)
+        self.feedback('bottom_feedback','off');await self.c.tick(None)
+        await self.c.command('timer_start',{'hours':0,'minutes':1})
+        self.assertTrue(self.c.snapshot()['timer_active'])
+    async def test_timer_allows_top_and_bottom_and_runs_when_auto_off(self):
+        await self.c.command('timer_start',{'hours':0,'minutes':1})
+        self.feedback('bottom_feedback','on');await self.enable();await self.c.tick(None)
+        self.assertIn(('switch','turn_on',self.c.entities['top_switch']),self.calls)
+        await self.c.command('enable',False)
+        self.assertTrue(self.c.snapshot()['timer_active'])
+        self.c.timer_deadline=time.monotonic()-1;await self.c.tick(None)
+        self.assertEqual(self.calls[-1],('switch','turn_off',self.c.entities['bottom_switch']))
+    async def test_timer_rejects_invalid_and_duplicate_start(self):
+        for value in [{'hours':0,'minutes':0},{'hours':24,'minutes':0},{'hours':0,'minutes':60},{'hours':True,'minutes':0},{'hours':1.5,'minutes':0},None]:
+            with self.assertRaises(ValueError):await self.c.command('timer_start',value)
+        self.assertEqual(self.calls,[])
+        await self.c.command('timer_start',{'hours':0,'minutes':1})
+        with self.assertRaises(ValueError):await self.c.command('timer_start',{'hours':0,'minutes':1})
+    async def test_timer_missing_feedback_cancels_and_retries_off(self):
+        await self.c.command('timer_start',{'hours':0,'minutes':1})
+        self.c.pending['bottom']['sent']-=16
+        await self.c.tick(None)
+        self.assertFalse(self.c.snapshot()['timer_active'])
+        self.assertEqual(self.calls[-1][1],'turn_off')
+        self.feedback('bottom_feedback','unknown');self.c.pending['bottom']['sent']-=16
+        await self.c.tick(None);self.assertEqual(self.calls[-1][1],'turn_off')
+    async def test_timer_external_off_never_restarts(self):
+        await self.c.command('timer_start',{'hours':0,'minutes':1})
+        self.feedback('bottom_feedback','on');await self.c.tick(None)
+        self.feedback('bottom_feedback','off');await self.c.tick(None);await self.c.tick(None)
+        self.assertFalse(self.c.timer_owned)
+        self.assertEqual(sum(action=='turn_on' for _,action,_ in self.calls),1)
+    async def test_timer_restart_sends_only_off_and_does_not_resume(self):
+        await self.c.command('timer_start',{'hours':0,'minutes':1})
+        self.feedback('bottom_feedback','on')
+        other=self.water_module.WaterController(self.parent,self.entry)
+        other.store=self.c.store;self.calls.clear();await other.start()
+        self.assertEqual(self.calls,[('switch','turn_off',self.c.entities['bottom_switch'])])
+        self.assertIsNone(other.timer_deadline)
+        self.feedback('bottom_feedback','off');await other.tick(None);await other.stop()
+    async def test_timer_service_failure_attempts_compensating_off(self):
+        real=self.hass.services.async_call
+        async def fail_on(domain,action,data,blocking):
+            if action=='turn_on':raise RuntimeError('offline')
+            await real(domain,action,data,blocking)
+        self.hass.services.async_call=fail_on
+        with self.assertRaises(ValueError):await self.c.command('timer_start',{'hours':0,'minutes':1})
+        self.assertIsNone(self.c.timer_deadline)
+        self.assertEqual(self.calls[-1][1],'turn_off')
+
     async def test_unit_conversion_unknown_and_invalid_feedback(self):
         parse=self.water_module.state_temperature
         self.assertAlmostEqual(parse(types.SimpleNamespace(state='122',attributes={'unit_of_measurement':'°F'})),50)
