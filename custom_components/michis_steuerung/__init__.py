@@ -380,7 +380,7 @@ async def async_setup_entry(hass, entry):
         await controller.start()
         await controller.save()
         await panel_custom.async_register_panel(hass,
-            frontend_url_path=DOMAIN, webcomponent_name='michis-steuerung-panel-030b1',
+            frontend_url_path=DOMAIN, webcomponent_name='michis-steuerung-panel-030b4',
             sidebar_title=NAME, sidebar_icon='mdi:coolant-temperature',
             module_url=f'/{DOMAIN}/panel.js?v={UI_BUILD}', require_admin=True)
     except Exception:
@@ -494,7 +494,7 @@ async def setup_water_entry(hass, entry):
 
 
 def validate_water_outputs(parent, entities):
-    outputs = {entities['top_switch'], entities['pump_switch']}
+    outputs = {entities['top_switch'], entities['bottom_switch'], entities['pump_switch']}
     for water in parent.waters.values():
-        if outputs & {water.entities['top_switch'], water.entities['pump_switch']}:
+        if outputs & {water.entities['top_switch'], water.entities['bottom_switch'], water.entities['pump_switch']}:
             raise ValueError('Heizstab oder Pumpe wird bereits durch einen Brauchwasser-Regler verwendet')

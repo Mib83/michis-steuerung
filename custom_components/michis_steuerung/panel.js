@@ -1,5 +1,5 @@
-import './fan-panel.js?v=michis-0.3.0b1';
-import './water-panel.js?v=michis-0.3.0b1';
+import './fan-panel.js?v=michis-0.3.0b4';
+import './water-panel.js?v=michis-0.3.0b4';
 const DOMAIN = 'michis_steuerung';
 const esc = value => String(value ?? '').replace(/[&<>"']/g, x=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[x]));
 const num = (v,d=1) => v === null || v === undefined ? '—' : Number(v).toLocaleString('de-DE',{minimumFractionDigits:d,maximumFractionDigits:d});
@@ -23,7 +23,8 @@ class MinerGroundwaterPanel extends HTMLElement {
   select{padding:8px;border:1px solid var(--divider-color,#ccd9df);border-radius:10px;background:var(--card-background-color,white);color:inherit;font:inherit}.module-head{display:grid;grid-template-columns:minmax(0,1fr) 490px;gap:24px}.fold{min-width:0;overflow-wrap:anywhere}.fold .arrow{flex:none}.compact{display:grid;grid-template-columns:150px 180px 136px;gap:12px;width:auto}.compact-switch{white-space:nowrap}.compact-switch input[type=checkbox]{width:46px;min-width:46px;height:26px;flex:0 0 46px;box-sizing:border-box;margin:0}.chart{height:245px}.card,.bottom,.module-body,#graph{min-width:0}.settings{grid-template-columns:repeat(auto-fit,minmax(min(230px,100%),1fr))}.checkrow{grid-column:1/-1}.legend{flex-wrap:wrap}
   @media(max-width:1100px){.module-head{grid-template-columns:minmax(0,1fr)}.compact{width:100%;grid-template-columns:minmax(0,1fr) minmax(0,1fr) 136px}}
   @media(max-width:560px){.compact{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.compact-switch{grid-column:1/-1;justify-self:end}.compact-value{font-size:23px}}
-  </style>
+  .compact-value,.value{line-height:1.3}.compact-switch,.toggle{justify-content:flex-start}
+ </style>
   <main><header><div class="logo"><img src="/${DOMAIN}/brand/icon.png" width="54" height="54" alt=""></div><div><h1>Michi´s Steuerung</h1><p>Geräte und Regler im Überblick.</p></div></header>
   <section id="regler-module" class="module collapsed"><div class="module-head">
   <button id="fold" class="fold" aria-expanded="false" aria-controls="regler-body"><span class="arrow" aria-hidden="true">›</span><span>Miner Ventiel Grundwasser Regler</span></button>
@@ -69,8 +70,8 @@ class MinerGroundwaterPanel extends HTMLElement {
   text('footer',`UDP-Ziel ${s.target} · ${s.last_message?'Zuletzt gesendet: '+s.last_message:'Noch kein Stellwert gesendet'} · v${s.version} · UDP ohne Empfangsbestätigung`);this.graph(s);this.updateFans(s.fans||[]);this.updateWaters(s.waters||[]);
   if(!this.sourcesDirty&&s.sources){s.sources.forEach((source,i)=>{for(const [id,value] of [[`source-name-${i}`,source.name],[`source-base-${i}`,source.base],...source.labels.map((label,j)=>[`source-label-${i}-${j}`,label])]){const input=this.shadowRoot.getElementById(id);if(this.shadowRoot.activeElement!==input)input.value=value;}});text('sources-pending','');}
   }
-  updateFans(fans){const root=this.shadowRoot.getElementById('fans');for(const fan of fans){let card=this.fanCards.get(fan.id);if(!card){card=document.createElement('michis-fan-card-030b1');card.onCommand=(action,value)=>this.command('fan_command',{id:fan.id,action,value});card.drawGraph=s=>this.graph.call(card,s);card.onPeriodChange=()=>this.load();this.fanCards.set(fan.id,card);root.appendChild(card);}card.update(fan);}for(const [id,card] of this.fanCards){if(!fans.some(f=>f.id===id)){card.remove();this.fanCards.delete(id);}}}
-  updateWaters(waters){const root=this.shadowRoot.getElementById('waters');for(const state of waters){let card=this.waterCards.get(state.id);if(!card){card=document.createElement('michis-water-card-030b1');card.onEnable=value=>this.command('water_command',{id:state.id,action:'enable',value});card.onSave=value=>this.command('water_command',{id:state.id,action:'settings',value});this.waterCards.set(state.id,card);root.appendChild(card);}card.update(state);}for(const [id,card] of this.waterCards){if(!waters.some(w=>w.id===id)){card.remove();this.waterCards.delete(id);}}}
+  updateFans(fans){const root=this.shadowRoot.getElementById('fans');for(const fan of fans){let card=this.fanCards.get(fan.id);if(!card){card=document.createElement('michis-fan-card-030b4');card.onCommand=(action,value)=>this.command('fan_command',{id:fan.id,action,value});card.drawGraph=s=>this.graph.call(card,s);card.onPeriodChange=()=>this.load();this.fanCards.set(fan.id,card);root.appendChild(card);}card.update(fan);}for(const [id,card] of this.fanCards){if(!fans.some(f=>f.id===id)){card.remove();this.fanCards.delete(id);}}}
+  updateWaters(waters){const root=this.shadowRoot.getElementById('waters');for(const state of waters){let card=this.waterCards.get(state.id);if(!card){card=document.createElement('michis-water-card-030b4');card.onEnable=value=>this.command('water_command',{id:state.id,action:'enable',value});card.onTimer=(action,value)=>this.command('water_command',{id:state.id,action,value});card.onSave=value=>this.command('water_command',{id:state.id,action:'settings',value});this.waterCards.set(state.id,card);root.appendChild(card);}card.update(state);}for(const [id,card] of this.waterCards){if(!waters.some(w=>w.id===id)){card.remove();this.waterCards.delete(id);}}}
   graph(s){const el=this.shadowRoot.getElementById('graph');const seconds=this.historySeconds||3600;const now=Date.now()/1000;const pts=s.history.filter(p=>p.t>=now-seconds);if(pts.length<2){el.innerHTML='<div class="chart" style="display:grid;place-items:center;color:var(--secondary-text-color)">Verlauf wird aufgebaut …</div>';return;}
   const width=Math.max(240,el.clientWidth||725),left=48,right=width-45,top=20,bottom=210,height=245;
   const vals=pts.map(p=>p.temperature).filter(v=>v!==null);const lo=Math.floor(Math.min(s.settings.lower-1,...vals)-.5),hi=Math.ceil(Math.max(s.settings.upper+1,...vals)+.5);const span=hi-lo||1,start=now-seconds,end=now;const x=t=>left+(t-start)/seconds*(right-left),y=t=>bottom-(t-lo)/span*(bottom-top),v=n=>bottom-n/10*(bottom-top);
@@ -81,4 +82,4 @@ class MinerGroundwaterPanel extends HTMLElement {
 
   }
 }
-if(!customElements.get('michis-steuerung-panel-030b1'))customElements.define('michis-steuerung-panel-030b1',MinerGroundwaterPanel);
+if(!customElements.get('michis-steuerung-panel-030b4'))customElements.define('michis-steuerung-panel-030b4',MinerGroundwaterPanel);

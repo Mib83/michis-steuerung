@@ -1,4 +1,4 @@
-"""HA-entity water controller. Only upper heater and circulation pump are outputs."""
+"""HA water controller with upper automatic heater, circulation and lower manual timer."""
 import asyncio
 import copy
 import time
@@ -51,6 +51,10 @@ class WaterController:
         self.last_message = None
         self.persistence_dirty = False
         self.stopping = False
+        self.timer_deadline = None
+        self.timer_owned = False
+        self.timer_confirmed = False
+        self.timer_error = None
 
     def read(self, key):
         return self.hass.states.get(self.entities[key])
@@ -78,6 +82,10 @@ class WaterController:
             value = saved.get('last_top_off')
             if value is not None:
                 self.last_top_off = min(finite(value),time.time())
+        if saved and saved.get('timer_owned'):
+            self.timer_owned = True
+            self.timer_error = 'Timer nach Neustart beendet'
+            await self.timer_off()
         if self.last_top_off is None and state_binary(self.read('top_feedback')) is False:
             self.last_top_off = time.time()
         @callback
@@ -93,7 +101,7 @@ class WaterController:
         # No startup commands; enabling always requires a deliberate user action.
 
     async def save(self):
-        await self.store.async_save({'settings':self.settings,'configured':self.configured(),'last_top_off':self.last_top_off})
+        await self.store.async_save({'settings':self.settings,'configured':self.configured(),'last_top_off':self.last_top_off,'timer_owned':self.timer_owned})
         self.persistence_dirty = False
 
     def snapshot(self):
@@ -118,10 +126,14 @@ class WaterController:
             if demand['legionella']:
                 status = 'Legionellenprogramm · nur oberer Heizstab' + (' · Sperrzeit aktiv' if remaining>0 else '')
         return {'id':self.water_id,'name':self.name,'settings':copy.deepcopy(self.settings),
+            'timer_active':self.timer_deadline is not None,
+            'timer_remaining':max(0,round(self.timer_deadline-time.monotonic())) if self.timer_deadline is not None else 0,
+            'timer_error':self.timer_error,'timer_stopping':self.timer_owned and self.timer_deadline is None,
+            'timer_available':not self.timer_owned and 'bottom' not in self.pending and state_binary(self.read('bottom_switch')) is not None and state_binary(self.read('bottom_feedback')) is False,
             'entities':dict(self.entities),'top_temperature':top,'bottom_temperature':bottom,
             'top_on':state_binary(self.read('top_feedback')),'bottom_on':state_binary(self.read('bottom_feedback')),
             'pump_on':state_binary(self.read('pump_feedback')),'enabled':self.enabled,
-            'enable_available':self.enabled or (configured and ready and not self.pending),
+            'enable_available':self.enabled or (configured and ready and not any(k != 'bottom' for k in self.pending)),
             'wait_remaining':round(remaining,1),'status':status,'last_error':self.last_error,'last_message':self.last_message}
 
     async def drive(self,key,desired,force=False):
@@ -145,7 +157,8 @@ class WaterController:
         self.enabled = False
         self.last_error = message
         # A compensating OFF is sent once, even if an ON acknowledgement was lost.
-        self.pending.clear()
+        for key in ('top','pump'):
+            self.pending.pop(key,None)
         for key in ('top','pump'):
             try:
                 await self.drive(key,False,force=True)
@@ -153,14 +166,59 @@ class WaterController:
                 self.last_error += ' · Ausschalten '+('oberer Heizstab' if key == 'top' else 'Zirkulationspumpe')+' nicht bestätigt'
         # No automatic restart after a fault.
 
+    async def timer_off(self):
+        self.timer_deadline = None
+        try:
+            await self.drive('bottom',False,force=True)
+        except Exception:
+            self.timer_error = 'Unterer Heizstab: Ausschalten fehlgeschlagen; Rückmeldung prüfen'
+        await self.save()
+
+    async def timer_tick(self):
+        if not self.timer_owned:
+            return
+        feedback = state_binary(self.read('bottom_feedback'))
+        if self.timer_deadline is None:
+            if feedback is False:
+                self.pending.pop('bottom',None)
+                self.timer_owned = False
+                await self.save()
+            else:
+                # Retry OFF until confirmed; never resume an interrupted timer.
+                pending = self.pending.get('bottom')
+                if not pending or time.monotonic()-pending['sent'] >= 15:
+                    await self.timer_off()
+            return
+        if time.monotonic() >= self.timer_deadline:
+            await self.timer_off()
+            return
+        if feedback is None or state_binary(self.read('bottom_switch')) is None:
+            self.timer_error = 'Unterer Heizstab: Rückmeldung nicht verfügbar · Timer beendet'
+            await self.timer_off()
+            return
+        if self.timer_confirmed and feedback is False:
+            self.timer_error = 'Unterer Heizstab extern ausgeschaltet · Timer beendet'
+            await self.timer_off()
+            return
+        try:
+            await self.drive('bottom',True)
+            if feedback is True:
+                self.timer_confirmed = True
+        except Exception:
+            self.timer_error = 'Unterer Heizstab: Einschalten nicht bestätigt · Timer beendet'
+            await self.timer_off()
+
     async def tick(self,_now):
         async with self.lock:
             if self.stopping:
                 return
+            await self.timer_tick()
             if self.persistence_dirty:
                 await self.save()
             # Acknowledge outstanding OFF commands even with automation disabled.
             for key,pending in list(self.pending.items()):
+                if key == 'bottom':
+                    continue
                 if state_binary(self.read(key+'_feedback')) == pending['desired']:
                     if key == 'top' and not pending['desired'] and (self.last_top_off is None or self.last_top_off < pending['sent_wall']):
                         self.last_top_off = time.time()
@@ -184,7 +242,30 @@ class WaterController:
 
     async def command(self,action,value):
         async with self.lock:
-            if action == 'settings':
+            if action == 'timer_start':
+                if not isinstance(value,dict) or set(value) != {'hours','minutes'}:
+                    raise ValueError('Stunden und Minuten erforderlich')
+                hours,minutes = value['hours'],value['minutes']
+                if type(hours) is not int or type(minutes) is not int or not 0 <= hours <= 23 or not 0 <= minutes <= 59 or hours*60+minutes == 0:
+                    raise ValueError('Dauer zwischen 1 Minute und 23 Stunden 59 Minuten wählen')
+                if self.timer_owned or 'bottom' in self.pending or state_binary(self.read('bottom_feedback')) is not False or state_binary(self.read('bottom_switch')) is None:
+                    raise ValueError('Unterer Heizstab muss bestätigt aus und verfügbar sein')
+                self.timer_error = None
+                self.timer_confirmed = False
+                self.timer_owned = True
+                # Persist ownership before ON so recovery can always issue OFF.
+                await self.save()
+                self.timer_deadline = time.monotonic()+hours*3600+minutes*60
+                try:
+                    await self.drive('bottom',True)
+                except Exception as error:
+                    self.timer_error = 'Unterer Heizstab: Einschalten fehlgeschlagen'
+                    await self.timer_off()
+                    raise ValueError(self.timer_error) from error
+            elif action == 'timer_stop':
+                if self.timer_owned:
+                    await self.timer_off()
+            elif action == 'settings':
                 settings = validate_water_settings(value)
                 self.settings = settings
                 await self.save()
@@ -192,7 +273,7 @@ class WaterController:
                 if not isinstance(value,bool):
                     raise ValueError('Schalterwert ungültig')
                 if value:
-                    if not self.configured() or not self.ready() or self.pending:
+                    if not self.configured() or not self.ready() or any(k != 'bottom' for k in self.pending):
                         raise ValueError('Gültige Einstellungen, Temperatur und bestätigte Loxone-Rückmeldungen erforderlich')
                     self.last_error = None
                     self.enabled = True
@@ -214,6 +295,8 @@ class WaterController:
             unsubscribe()
         self.unsubscribers.clear()
         async with self.lock:
+            if self.timer_owned:
+                await self.timer_off()
             if self.enabled:
                 await self.fail_off('Regler gestoppt · Automatik aus')
             self.enabled = False
