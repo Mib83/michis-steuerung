@@ -1,5 +1,5 @@
-import './fan-panel.js?v=michis-0.3.0b4';
-import './water-panel.js?v=michis-0.3.0b4';
+import './fan-panel.js?v=michis-0.3.0';
+import './water-panel.js?v=michis-0.3.0';
 const DOMAIN = 'michis_steuerung';
 const esc = value => String(value ?? '').replace(/[&<>"']/g, x=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[x]));
 const num = (v,d=1) => v === null || v === undefined ? '—' : Number(v).toLocaleString('de-DE',{minimumFractionDigits:d,maximumFractionDigits:d});
@@ -70,8 +70,8 @@ class MinerGroundwaterPanel extends HTMLElement {
   text('footer',`UDP-Ziel ${s.target} · ${s.last_message?'Zuletzt gesendet: '+s.last_message:'Noch kein Stellwert gesendet'} · v${s.version} · UDP ohne Empfangsbestätigung`);this.graph(s);this.updateFans(s.fans||[]);this.updateWaters(s.waters||[]);
   if(!this.sourcesDirty&&s.sources){s.sources.forEach((source,i)=>{for(const [id,value] of [[`source-name-${i}`,source.name],[`source-base-${i}`,source.base],...source.labels.map((label,j)=>[`source-label-${i}-${j}`,label])]){const input=this.shadowRoot.getElementById(id);if(this.shadowRoot.activeElement!==input)input.value=value;}});text('sources-pending','');}
   }
-  updateFans(fans){const root=this.shadowRoot.getElementById('fans');for(const fan of fans){let card=this.fanCards.get(fan.id);if(!card){card=document.createElement('michis-fan-card-030b4');card.onCommand=(action,value)=>this.command('fan_command',{id:fan.id,action,value});card.drawGraph=s=>this.graph.call(card,s);card.onPeriodChange=()=>this.load();this.fanCards.set(fan.id,card);root.appendChild(card);}card.update(fan);}for(const [id,card] of this.fanCards){if(!fans.some(f=>f.id===id)){card.remove();this.fanCards.delete(id);}}}
-  updateWaters(waters){const root=this.shadowRoot.getElementById('waters');for(const state of waters){let card=this.waterCards.get(state.id);if(!card){card=document.createElement('michis-water-card-030b4');card.onEnable=value=>this.command('water_command',{id:state.id,action:'enable',value});card.onTimer=(action,value)=>this.command('water_command',{id:state.id,action,value});card.onSave=value=>this.command('water_command',{id:state.id,action:'settings',value});this.waterCards.set(state.id,card);root.appendChild(card);}card.update(state);}for(const [id,card] of this.waterCards){if(!waters.some(w=>w.id===id)){card.remove();this.waterCards.delete(id);}}}
+  updateFans(fans){const root=this.shadowRoot.getElementById('fans');for(const fan of fans){let card=this.fanCards.get(fan.id);if(!card){card=document.createElement('michis-fan-card-030');card.onCommand=(action,value)=>this.command('fan_command',{id:fan.id,action,value});card.drawGraph=s=>this.graph.call(card,s);card.onPeriodChange=()=>this.load();this.fanCards.set(fan.id,card);root.appendChild(card);}card.update(fan);}for(const [id,card] of this.fanCards){if(!fans.some(f=>f.id===id)){card.remove();this.fanCards.delete(id);}}}
+  updateWaters(waters){const root=this.shadowRoot.getElementById('waters');for(const state of waters){let card=this.waterCards.get(state.id);if(!card){card=document.createElement('michis-water-card-030');card.onEnable=value=>this.command('water_command',{id:state.id,action:'enable',value});card.onTimer=(action,value)=>this.command('water_command',{id:state.id,action,value});card.onSave=value=>this.command('water_command',{id:state.id,action:'settings',value});this.waterCards.set(state.id,card);root.appendChild(card);}card.update(state);}for(const [id,card] of this.waterCards){if(!waters.some(w=>w.id===id)){card.remove();this.waterCards.delete(id);}}}
   graph(s){const el=this.shadowRoot.getElementById('graph');const seconds=this.historySeconds||3600;const now=Date.now()/1000;const pts=s.history.filter(p=>p.t>=now-seconds);if(pts.length<2){el.innerHTML='<div class="chart" style="display:grid;place-items:center;color:var(--secondary-text-color)">Verlauf wird aufgebaut …</div>';return;}
   const width=Math.max(240,el.clientWidth||725),left=48,right=width-45,top=20,bottom=210,height=245;
   const vals=pts.map(p=>p.temperature).filter(v=>v!==null);const lo=Math.floor(Math.min(s.settings.lower-1,...vals)-.5),hi=Math.ceil(Math.max(s.settings.upper+1,...vals)+.5);const span=hi-lo||1,start=now-seconds,end=now;const x=t=>left+(t-start)/seconds*(right-left),y=t=>bottom-(t-lo)/span*(bottom-top),v=n=>bottom-n/10*(bottom-top);
@@ -82,4 +82,4 @@ class MinerGroundwaterPanel extends HTMLElement {
 
   }
 }
-if(!customElements.get('michis-steuerung-panel-030b4'))customElements.define('michis-steuerung-panel-030b4',MinerGroundwaterPanel);
+if(!customElements.get('michis-steuerung-panel-030'))customElements.define('michis-steuerung-panel-030',MinerGroundwaterPanel);

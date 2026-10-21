@@ -9,7 +9,7 @@ from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 from .const import DOMAIN
 from .engine import finite
-from .water_engine import WATER_DEFAULTS, validate_entities, validate_water_settings, water_demand
+from .water_engine import WATER_DEFAULTS, validate_entities, validate_water_settings, water_demand, active_window
 
 
 def state_temperature(state):
@@ -51,6 +51,7 @@ class WaterController:
         self.last_message = None
         self.persistence_dirty = False
         self.stopping = False
+        self.program_owned = False
         self.timer_deadline = None
         self.timer_owned = False
         self.timer_confirmed = False
@@ -65,6 +66,10 @@ class WaterController:
             return True
         except (ValueError,TypeError):
             return False
+
+    def legionella_active(self):
+        return bool(self.configured() and self.settings['legionella_enabled'] and active_window(
+            self.settings['legionella_days'],self.settings['legionella_from'],self.settings['legionella_until'],dt_util.now()))
 
     def ready(self):
         return (state_temperature(self.read('top_temperature')) is not None
@@ -116,12 +121,12 @@ class WaterController:
         elif not ready:
             status = 'Temperatur oder Loxone-Rückmeldung nicht verfügbar'
         elif not self.enabled:
-            status = 'Automatik aus'
+            status = 'Normalautomatik aus · Legionellenprogramm wartet auf Zeitfenster' if self.settings['legionella_enabled'] else 'Automatik aus'
         elif remaining > 0:
             status = 'Heizstab gesperrt · Erholungszeit'
         else:
             status = 'Normalbetrieb · nur oberer Heizstab'
-        if self.enabled and configured and ready and not self.last_error:
+        if (self.enabled or self.legionella_active()) and configured and ready and not self.last_error:
             demand = water_demand(self.settings,top,state_binary(self.read('top_feedback')),remaining>0,dt_util.now())
             if demand['legionella']:
                 status = 'Legionellenprogramm · nur oberer Heizstab' + (' · Sperrzeit aktiv' if remaining>0 else '')
@@ -227,16 +232,25 @@ class WaterController:
                 elif not self.enabled and time.monotonic()-pending['sent'] > 15:
                     self.pending.pop(key,None)
                     self.last_error = 'Ausschalten nicht durch Loxone bestätigt · Automatik aus'
-            if not self.enabled:
+            active = self.legionella_active()
+            if self.last_error and not self.enabled:
+                return
+            if not self.enabled and not active and not self.program_owned:
                 return
             if not self.ready():
                 await self.fail_off('Temperatur oder Relaisrückmeldung ausgefallen · Automatik aus')
                 return
             demand = water_demand(self.settings,state_temperature(self.read('top_temperature')),
                 state_binary(self.read('top_feedback')),self.remaining()>0,dt_util.now())
+            if not self.enabled and not active:
+                demand['heat'] = demand['pump'] = False
+            if self.enabled or active:
+                self.program_owned = True
             try:
                 await self.drive('top',demand['heat'])
                 await self.drive('pump',demand['pump'])
+                if not self.enabled and not active and not any(k != 'bottom' for k in self.pending):
+                    self.program_owned = False
             except Exception as error:
                 await self.fail_off(str(error) or 'Loxone-Schaltbefehl fehlgeschlagen · Automatik aus')
 
@@ -268,6 +282,7 @@ class WaterController:
             elif action == 'settings':
                 settings = validate_water_settings(value)
                 self.settings = settings
+                self.last_error = None
                 await self.save()
             elif action == 'enable':
                 if not isinstance(value,bool):
@@ -280,8 +295,9 @@ class WaterController:
                 else:
                     self.enabled = False
                     try:
-                        await self.drive('top',False)
-                        await self.drive('pump',False)
+                        if not self.legionella_active():
+                            await self.drive('top',False)
+                            await self.drive('pump',False)
                     except Exception as error:
                         self.last_error = str(error)
                         raise ValueError('Ausschalten fehlgeschlagen; Loxone-Rückmeldung prüfen') from error
@@ -297,7 +313,7 @@ class WaterController:
         async with self.lock:
             if self.timer_owned:
                 await self.timer_off()
-            if self.enabled:
+            if self.enabled or self.program_owned:
                 await self.fail_off('Regler gestoppt · Automatik aus')
             self.enabled = False
             await self.save()
