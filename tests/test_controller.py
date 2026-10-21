@@ -607,6 +607,38 @@ class WaterTests(unittest.IsolatedAsyncioTestCase):
         other=self.water_module.WaterController(self.parent,self.entry);other.store.data=self.c.store.data
         await other.start();self.assertFalse(other.enabled);self.assertGreater(other.remaining(),119);self.assertEqual(other.settings['restart_top'],45)
         await other.stop();self.assertEqual(self.calls,[])
+    async def test_legionella_runs_without_normal_automation(self):
+        self.settings.update(legionella_enabled=True,legionella_target=60,legionella_from='08:00',legionella_until='09:00',legionella_days=[0],legionella_pump=True)
+        await self.c.command('settings',self.settings);await self.c.tick(None)
+        self.assertFalse(self.c.enabled)
+        self.assertIn(('switch','turn_on',self.c.entities['top_switch']),self.calls)
+        self.assertIn(('switch','turn_on',self.c.entities['pump_switch']),self.calls)
+        self.assertIn('Legionellenprogramm',self.c.snapshot()['status'])
+        self.feedback('top_feedback','on');self.feedback('pump_feedback','on');await self.c.tick(None)
+        self.calls.clear();await self.c.command('enable',False)
+        self.assertEqual(self.calls,[])
+        self.temperature(60);await self.c.tick(None)
+        self.assertEqual(self.calls[-1],('switch','turn_off',self.c.entities['top_switch']))
+    async def test_legionella_window_end_stops_without_normal_heat(self):
+        self.settings.update(legionella_enabled=True,legionella_target=60,legionella_from='08:00',legionella_until='09:00',legionella_days=[0],legionella_pump=True)
+        await self.c.command('settings',self.settings);await self.c.tick(None)
+        self.feedback('top_feedback','on');self.feedback('pump_feedback','on');await self.c.tick(None)
+        self.now=self.now.replace(hour=9);self.calls.clear();await self.c.tick(None)
+        self.assertIn(('switch','turn_off',self.c.entities['top_switch']),self.calls)
+        self.assertIn(('switch','turn_off',self.c.entities['pump_switch']),self.calls)
+    async def test_legionella_switch_off_stops_independent_program(self):
+        self.settings.update(legionella_enabled=True,legionella_target=60,legionella_from='08:00',legionella_until='09:00',legionella_days=[0])
+        await self.c.command('settings',self.settings);await self.c.tick(None)
+        self.feedback('top_feedback','on');await self.c.tick(None)
+        self.settings['legionella_enabled']=False;await self.c.command('settings',self.settings)
+        self.calls.clear();await self.c.tick(None)
+        self.assertEqual(self.calls[-1],('switch','turn_off',self.c.entities['top_switch']))
+    async def test_legionella_waits_outside_window_and_respects_lockout(self):
+        self.settings.update(legionella_enabled=True,legionella_target=60,legionella_from='09:00',legionella_until='10:00',legionella_days=[0])
+        await self.c.command('settings',self.settings);await self.c.tick(None);self.assertEqual(self.calls,[])
+        self.now=self.now.replace(hour=9);self.c.last_top_off=time.time();await self.c.tick(None)
+        self.assertNotIn(('switch','turn_on',self.c.entities['top_switch']),self.calls)
+
     async def test_timer_start_expire_and_confirm_off(self):
         await self.c.command('timer_start',{'hours':0,'minutes':1})
         self.assertTrue(self.c.store.data['timer_owned'])
