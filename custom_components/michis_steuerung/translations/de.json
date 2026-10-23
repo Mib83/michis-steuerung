@@ -69,5 +69,65 @@
       "already_configured": "Dieser Regler wurde bereits übernommen.",
       "invalid_import": "Ungültige Gerätedaten."
     }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Geräteeinstellungen",
+        "description": "Alle Zuordnungen nachträglich bearbeiten. Vor dem Speichern Automatik und Timer ausschalten; beim Brauchwasser auch das Legionellenprogramm deaktivieren. {error}",
+        "data": {
+          "host": "Loxone UDP-IP-Adresse",
+          "port": "Loxone UDP-Port",
+          "command": "UDP-Befehlsname",
+          "feedback_entity": "Ventil-Rückmeldung: Entitäts-ID (optional)",
+          "feedback_unit": "Ventil-Rückmeldung: Einheit",
+          "name": "Gerätename",
+          "sensor_host": "Modbus-IP-Adresse",
+          "sensor_port": "Modbus-Port",
+          "unit": "Modbus-Geräteadresse",
+          "minimum": "Mindestspannung",
+          "maximum": "Höchstspannung",
+          "off_mode": "Verhalten bei Automatik aus",
+          "top_temperature": "Temperatur oben",
+          "bottom_temperature": "Temperatur unten",
+          "top_switch": "Heizstab oben schalten",
+          "top_feedback": "Heizstab oben Rückmeldung",
+          "bottom_switch": "Heizstab unten schalten",
+          "bottom_feedback": "Heizstab unten Rückmeldung",
+          "pump_switch": "Zirkulationspumpe schalten",
+          "pump_feedback": "Zirkulationspumpe Rückmeldung",
+          "miner_0_name": "Miner 1: Name",
+          "miner_0_base": "Miner 1: MQTT-Basispfad",
+          "miner_0_label_0": "Miner 1: Temperaturname Slot 0",
+          "miner_0_label_1": "Miner 1: Temperaturname Slot 1",
+          "miner_0_label_2": "Miner 1: Temperaturname Slot 2",
+          "miner_0_label_3": "Miner 1: Temperaturname Slot 3",
+          "miner_1_name": "Miner 2: Name",
+          "miner_1_base": "Miner 2: MQTT-Basispfad",
+          "miner_1_label_0": "Miner 2: Temperaturname Slot 0",
+          "miner_1_label_1": "Miner 2: Temperaturname Slot 1",
+          "miner_1_label_2": "Miner 2: Temperaturname Slot 2",
+          "miner_1_label_3": "Miner 2: Temperaturname Slot 3",
+          "miner_2_name": "Miner 3: Name",
+          "miner_2_base": "Miner 3: MQTT-Basispfad",
+          "miner_2_label_0": "Miner 3: Temperaturname Slot 0",
+          "miner_2_label_1": "Miner 3: Temperaturname Slot 1",
+          "miner_2_label_2": "Miner 3: Temperaturname Slot 2",
+          "miner_2_label_3": "Miner 3: Temperaturname Slot 3",
+          "miner_3_name": "Miner 4: Name",
+          "miner_3_base": "Miner 4: MQTT-Basispfad",
+          "miner_3_label_0": "Miner 4: Temperaturname Slot 0",
+          "miner_3_label_1": "Miner 4: Temperaturname Slot 1",
+          "miner_3_label_2": "Miner 4: Temperaturname Slot 2",
+          "miner_3_label_3": "Miner 4: Temperaturname Slot 3"
+        }
+      }
+    },
+    "error": {
+      "invalid_device": "Einstellungen konnten nicht übernommen werden. Bitte Hinweise prüfen."
+    },
+    "abort": {
+      "controller_not_ready": "Regler ist noch nicht geladen."
+    }
   }
 }
