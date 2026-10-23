@@ -110,6 +110,7 @@ class Controller:
                             return
                         if key != 'ths':
                             self.hottest_guard.update(self.samples,self.sources,self.last_sent,self.settings['pause'],time.monotonic())
+                            self.record_data_gap()
                         self.samples[topic] = (value, time.monotonic())
                     new_unsubscribers.append(await mqtt.async_subscribe(self.hass, topic, receive, 1))
         except Exception:
@@ -122,6 +123,12 @@ class Controller:
         self.samples.clear()
         self.hottest_guard.reset()
         self.reset_jump_detection()
+
+    def record_data_gap(self):
+        # Record short gaps even when they fall between two 5-second history ticks.
+        if self.hottest_guard.config['enabled'] and self.hottest_guard.blocked_since is not None:
+            if not self.history or self.history[-1]['temperature'] is not None:
+                self.history.append({'t':time.time(),'temperature':None,'output':self.output})
 
     @staticmethod
     def validate_valve_feedback(value):
@@ -275,6 +282,7 @@ class Controller:
         async with self.lock:
             if self.sources:
                 recovered=self.hottest_guard.update(self.samples,self.sources,self.last_sent,self.settings['pause'],time.monotonic())
+                self.record_data_gap()
                 if recovered:
                     self.reset_jump_detection()
             state = self.snapshot()
