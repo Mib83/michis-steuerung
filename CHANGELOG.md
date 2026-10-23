@@ -1,3 +1,13 @@
+# V0.3.3 (0.3.3)
+
+- Messwert-Eingangsüberwachung für den heißesten Miner-Sensor, bei Gleichstand für alle gleich heißen Sensoren.
+- Standard: 5 Sekunden Intervall, 2 Sekunden Toleranz, keine zusätzlich tolerierten Aussetzer. Einstellbar unter Regler-Einstellungen → Messwert-Eingang überwachen.
+- Bei verspäteten Werten Stellwert halten und normale Pause um die Datenlücke verlängern. Normale und schnelle Verstellungen benötigen einen neuen Empfang nach der letzten Stellwertänderung. Keine nachgeholten Schritte.
+- Unveränderte neu empfangene Werte gelten als aktuell. Ein neu heißerer Sensor übernimmt die Überwachung; ein veralteter heißester Wert wird nicht durch einen frischeren kälteren Wert verdeckt.
+- Temperaturkurve zeigt Datenpausen als Lücken; Stellwert bleibt sichtbar.
+- Die vier gewünschten Hinweistexte bei Timern und Legionellenschutz entfernt. Beide Timer haben eigene Rahmen.
+- 111 simulierte Backend-Tests und UI-Verhaltenstests bestanden; Desktop-/Mobilvorschau geprüft.
+
 # V0.3.2 (0.3.2)
 
 - Neuer manueller 4-kW-Timer neben dem 7,5-kW-Timer; Restzeiten jeweils unter Start/Stopp.

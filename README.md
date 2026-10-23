@@ -1,6 +1,6 @@
 # Michi´s Steuerung
 
-Stabile Version **V0.3.2 (0.3.2)** für Home Assistant. Eine lokale Steuerung für wassergekühlte Miner und 0–10-V-Lüfter über Loxone. V0.2 entspricht funktional dem vom Anwender bestätigten Beta3-Stand.
+Stabile Version **V0.3.3 (0.3.3)** für Home Assistant. Eine lokale Steuerung für wassergekühlte Miner und 0–10-V-Lüfter über Loxone. V0.2 entspricht funktional dem vom Anwender bestätigten Beta3-Stand.
 
 ## Funktionen
 
@@ -25,7 +25,7 @@ Home Assistant Core **2026.10.1 oder neuer** und eine eingerichtete MQTT-Integra
 4. **Einstellungen → Geräte & Dienste → Integration hinzufügen → Michi´s Steuerung** öffnen und den Miner-Regler einrichten.
 5. Weitere Lüfter über **Gerät hinzufügen → 0-10V Lüftersteuerung Loxone** anlegen.
 
-Für ein Update in HACS **Informationen aktualisieren → Erneut herunterladen** wählen und Version **v0.3.2** installieren. Home Assistant vollständig neu starten; bei Bedarf Browser mit **⌘+Umschalt+R** neu laden. Bestehende Integration und Geräte behalten. Nach dem Neustart die gewünschten Automatiken wieder einschalten.
+Für ein Update in HACS **Informationen aktualisieren → Erneut herunterladen** wählen und Version **v0.3.3** installieren. Home Assistant vollständig neu starten; bei Bedarf Browser mit **⌘+Umschalt+R** neu laden. Bestehende Integration und Geräte behalten. Nach dem Neustart die gewünschten Automatiken wieder einschalten.
 
 Manuell: `custom_components/michis_steuerung` in das Home-Assistant-Konfigurationsverzeichnis kopieren und Home Assistant neu starten.
 
@@ -107,3 +107,15 @@ Alle drei Gerätetypen bieten nachträgliche Bearbeitung über **Einstellungen �
 Der neue 4-kW-Timer wird nur bei ausgeschalteter Normalautomatik, abgelaufener Sperrzeit und bestätigtem Aus gestartet. Während er läuft, lässt sich die Normalautomatik nicht einschalten. Beide Timer dürfen gleichzeitig laufen. Beginnt das unabhängige Legionellenprogramm, wird der 4-kW-Timer beendet; das Programm übernimmt erst nach bestätigtem Ausschalten und Sperrzeit. Nach Stopp/Ablauf bleibt der obere Heizstab bei ausgeschalteter Normalautomatik aus, bis ein aktives Legionellenprogramm ihn benötigt. Auch der 4-kW-Timer wird nach HA-Neustart nicht fortgesetzt: AUS wird gesendet und bei fehlender Rückmeldung wiederholt. Während HA abgeschaltet oder Loxone unerreichbar ist, kann kein Abschaltzeitpunkt garantiert werden.
 
 Validierung: 99 simulierte Backend-Tests einschließlich Timer-Recovery und Geräteänderungen, UI-Verhaltenstests sowie Desktop-/Mobilvorschau im Browser. Kein Test mit realen Heizstäben oder einer vollständigen HA-Installation.
+
+### Verspätete Miner-Messwerte (V0.3.3)
+
+Unter Regler-Einstellungen → **Messwert-Eingang überwachen** befinden sich der Schalter sowie erwartetes Intervall, Toleranz und tolerierte Aussetzer. Mit **Überwachung speichern** übernehmen. Standardmäßig aktiviert: 5 s Intervall, 2 s Toleranz, 0 zusätzliche Aussetzer. 1 tolerierter Aussetzer erlaubt 12 s, 2 erlauben 17 s bei den Standardwerten. Die vorhandene allgemeine Messwertgültigkeit bleibt zusätzlich wirksam.
+
+Überwacht wird der Empfang des derzeit heißesten Temperatursensors; bei Gleichstand werden die gleich heißen Sensoren geprüft. Die Nutzlast muss sich nicht ändern: Jede neu empfangene gültige MQTT-Nachricht zählt. Ein neu heißerer Kanal übernimmt; ein ausgebliebener heißester Wert bleibt überwacht, auch wenn seine allgemeine Messwertgültigkeit abgelaufen ist. Die sonstige Gültigkeitsprüfung aller 16 Temperaturwerte bleibt bestehen.
+
+Übersteigt das Empfangsalter die erlaubte Zeit, hält der Regler den Stellwert. Der während der Datenlücke verstrichene Teil der normalen Pause wird angehängt. Erst mit frischen Werten und abgelaufener verlängerter Pause wird weitergeregelt; es werden keine ausgelassenen Schritte gesammelt oder nachgeholt. Auch die Schnellreaktion darf die Datenprüfung und Pausenverlängerung nicht umgehen. Nach einer Verstellung muss von den jeweils heißesten Kanälen ein neuer Empfang vorliegen. Ein nach einer Datenlücke zurückkehrender Wert löst nicht rückwirkend eine alte Schnellreaktion aus.
+
+Der Status zeigt überwachte Sensoren, Empfangsalter und Pausenverlängerung. Die Temperaturkurve enthält bei erkannter Datenpause eine Lücke, statt unveränderte Temperatur vorzutäuschen. Der Verlauf hat weiterhin 5-Sekunden-Auflösung und wird nur seit Integrationsstart im Arbeitsspeicher geführt. Die Überwachung nutzt den Empfangszeitpunkt in Home Assistant: Wiederholt vorgeschaltete Software einen alten Messwert als neue MQTT-Nachricht, lässt sich das ohne Messzeitstempel der Quelle nicht unterscheiden.
+
+Die vier gewünschten Erklärungstexte wurden aus der Brauchwasser-Bedienung entfernt; Timerfunktionen, Sperrzeiten und Prioritäten bleiben unverändert. Beide Timer besitzen jetzt einen eigenen Rahmen. 111 simulierte Backend-Tests einschließlich Datenlücken, Gleichstand, Sensorwechsel, unveränderten neuen Werten und Schnellreaktion bestanden; UI-Verhalten und Desktop-/Mobilvorschau geprüft. Kein Test an realen Heizstäben oder einer vollständigen HA-Installation.
