@@ -17,6 +17,7 @@ from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.storage import Store
 from .const import DEFAULTS, DOMAIN, NAME, VERSION, UI_BUILD, LEGACY_DOMAIN, CONTROLLER_NAME
 from .history import chart_history, PERIODS
+from .freshness import HottestGuard, validate_freshness
 from .engine import finite, next_output, validate_settings, validate_sources
 
 class Controller:
@@ -26,6 +27,7 @@ class Controller:
         self.output = 4.0
         self.enabled = False
         self.samples = {}
+        self.hottest_guard = HottestGuard()
         self.history = deque(maxlen=17281)
         self.last_sent = None
         self.last_message = None
@@ -71,6 +73,10 @@ class Controller:
                 self.sources = validate_sources(saved['sources'])
             except (ValueError, TypeError):
                 pass
+        try:
+            self.hottest_guard=HottestGuard((saved or {}).get('freshness'))
+        except (ValueError,TypeError):
+            self.hottest_guard=HottestGuard()
         self.legacy_fans = (saved or {}).get('fans', [])
         try:
             self.valve_feedback = self.validate_valve_feedback((saved or {}).get('valve_feedback',self.valve_feedback))
@@ -102,6 +108,8 @@ class Controller:
                         if value < 0 or (key != 'ths' and value > 200):
                             self.samples.pop(topic, None)
                             return
+                        if key != 'ths':
+                            self.hottest_guard.update(self.samples,self.sources,self.last_sent,self.settings['pause'],time.monotonic())
                         self.samples[topic] = (value, time.monotonic())
                     new_unsubscribers.append(await mqtt.async_subscribe(self.hass, topic, receive, 1))
         except Exception:
@@ -112,6 +120,7 @@ class Controller:
             unsubscribe()
         self.mqtt_unsubscribers = new_unsubscribers
         self.samples.clear()
+        self.hottest_guard.reset()
         self.reset_jump_detection()
 
     @staticmethod
@@ -164,29 +173,34 @@ class Controller:
             miners.append({'name': source['name'], 'labels': source['labels'], 'temperatures': temps, 'ths': ths})
         ready = len(valid) == 16
         maximum = max(valid) if valid else None
-        remaining = max(0, self.settings['pause'] - (now-self.last_sent)) if self.last_sent is not None else 0
+        guard=self.hottest_guard.snapshot(self.samples,self.sources,self.last_sent,self.settings['pause'],now)
+        remaining=guard['remaining']
         if self.last_error:
             status = 'UDP-Sendefehler · Automatik aus'
         elif not ready:
             status = 'Messwerte fehlen · Stellwert wird gehalten'
         elif not self.enabled:
             status = 'Manuell · Automatik aus'
+        elif guard['late']:
+            status = 'Warte auf neue Werte des heißesten Sensors · Stellwert bleibt gleich'
+        elif not guard['allow']:
+            status = 'Warte auf Messwert nach letzter Stellwertänderung'
         elif remaining > 0:
-            status = 'Wartezeit nach Stellwertänderung'
+            status = 'Verlängerte Pause nach Datenlücke' if guard['extension']>0 else 'Wartezeit nach Stellwertänderung'
         elif maximum > self.settings['upper']:
             status = 'Mehr Kühlung erforderlich' if self.output < 10 else 'Obergrenze 10 V erreicht'
         elif maximum < self.settings['lower']:
             status = 'Kühlung reduzieren' if self.output > 0 else 'Untergrenze 0 V erreicht'
         else:
             status = 'Temperatur im gewünschten Bereich'
-        return {'valve_feedback': self.feedback_snapshot(), 'waters': [water.snapshot() for water in self.waters.values()], 'fans': [fan.snapshot((history_periods or {}).get(fan.fan_id, 3600)) for fan in self.fans.values()], 'fast_pending': self.pending_jump is not None, 'last_fast_event': self.last_fast_event, 'sources': self.sources, 'settings': self.settings, 'output': self.output, 'enabled': self.enabled,
+        return {'freshness':guard, 'valve_feedback': self.feedback_snapshot(), 'waters': [water.snapshot() for water in self.waters.values()], 'fans': [fan.snapshot((history_periods or {}).get(fan.fan_id, 3600)) for fan in self.fans.values()], 'fast_pending': self.pending_jump is not None, 'last_fast_event': self.last_fast_event, 'sources': self.sources, 'settings': self.settings, 'output': self.output, 'enabled': self.enabled,
             'miners': miners, 'maximum': maximum, 'ready': ready, 'valid_count': len(valid),
             'remaining': round(remaining,1), 'status': status,
             'last_message': self.last_message, 'sent_output': self.last_sent_output, 'last_error': self.last_error,
             'history': chart_history(self.history, (history_periods or {}).get('miner', 3600)), 'target': f"{self.entry.data['host']}:{self.entry.data['port']}", 'version': VERSION}
 
     async def save(self):
-        await self.store.async_save({'settings': self.settings, 'output': self.output, 'last_sent_output': self.last_sent_output, 'sources': self.sources, 'fans': self.legacy_fans, 'valve_feedback': self.valve_feedback})
+        await self.store.async_save({'settings': self.settings, 'output': self.output, 'last_sent_output': self.last_sent_output, 'sources': self.sources, 'fans': self.legacy_fans, 'valve_feedback': self.valve_feedback, 'freshness': self.hottest_guard.config})
 
     def output_limits(self):
         return 0, 10
@@ -225,6 +239,7 @@ class Controller:
         self.last_message = message
         self.last_sent_output = self.output
         self.last_sent = time.monotonic()
+        self.hottest_guard.reset()
         self.last_error = None
         await self.save()
 
@@ -258,8 +273,15 @@ class Controller:
 
     async def tick(self, _now):
         async with self.lock:
+            if self.sources:
+                recovered=self.hottest_guard.update(self.samples,self.sources,self.last_sent,self.settings['pause'],time.monotonic())
+                if recovered:
+                    self.reset_jump_detection()
             state = self.snapshot()
-            self.detect_jump(state)
+            if state.get('freshness',{}).get('late'):
+                self.reset_jump_detection()
+            else:
+                self.detect_jump(state)
             now = time.monotonic()
             pending = self.pending_jump
             if pending and (not self.settings['fast_enabled']
@@ -272,8 +294,10 @@ class Controller:
             # must respect a full normal pause after the previous fast step.
             fast_allowed = pending and (self.settings['fast_immediate'] or state['remaining'] <= 0)
             fast_allowed = fast_allowed and (self.last_fast is None or now-self.last_fast >= self.settings['pause'])
+            guard=state.get('freshness',{})
+            fast_allowed=fast_allowed and (not guard.get('extension',0) or state['remaining']<=0)
             minimum, maximum = self.output_limits()
-            if self.enabled and state['ready']:
+            if self.enabled and state['ready'] and guard.get('allow',True):
                 fast = bool(fast_allowed)
                 if fast:
                     value = round(min(maximum, self.output+self.settings['fast_step']), 1)
@@ -297,7 +321,7 @@ class Controller:
                                 'change': round(value-previous_output, 1)}
             if time.monotonic()-self.last_history >= 5:
                 state = self.snapshot()
-                self.history.append({'t': time.time(), 'temperature': state['maximum'] if state['ready'] else None, 'output': self.output})
+                self.history.append({'t': time.time(), 'temperature': state['maximum'] if state['ready'] and state.get('freshness',{}).get('fresh',True) else None, 'output': self.output})
                 self.last_history = time.monotonic()
 
     async def command(self, action, value):
@@ -309,7 +333,11 @@ class Controller:
         if action in ('fan_add', 'fan_command'):
             return await self.fan_action(action, value)
         async with self.lock:
-            if action == 'valve_feedback':
+            if action == 'freshness':
+                self.hottest_guard=HottestGuard(validate_freshness(value))
+                self.reset_jump_detection()
+                await self.save()
+            elif action == 'valve_feedback':
                 self.valve_feedback = self.validate_valve_feedback(value)
                 await self.save()
             elif action == 'settings':
@@ -422,7 +450,7 @@ async def async_setup_entry(hass, entry):
         await controller.start()
         await controller.save()
         await panel_custom.async_register_panel(hass,
-            frontend_url_path=DOMAIN, webcomponent_name='michis-steuerung-panel-032',
+            frontend_url_path=DOMAIN, webcomponent_name='michis-steuerung-panel-033',
             sidebar_title=NAME, sidebar_icon='mdi:coolant-temperature',
             module_url=f'/{DOMAIN}/panel.js?v={UI_BUILD}', require_admin=True)
     except Exception:
