@@ -16,7 +16,7 @@ def module(name, **attrs):
     sys.modules[name]=m
     return m
 identity=lambda f:f
-module('probatio',Required=lambda x,**kwargs:x,Optional=lambda x:x)
+module('probatio',Required=lambda x,**kwargs:x,Optional=lambda x,**kwargs:x)
 module('homeassistant')
 module('homeassistant.config_entries',ConfigEntryDisabler=types.SimpleNamespace(USER='user'))
 module('homeassistant.components')
@@ -68,6 +68,28 @@ class Tests(unittest.IsolatedAsyncioTestCase):
         return payload.decode()
     async def test_start_is_off_and_no_command(self):
         self.assertFalse(self.c.enabled);self.assertIsNone(self.c.last_message);self.assertEqual(len(callbacks),20)
+    async def test_miner_device_options_edit_all_sources_udp_and_feedback(self):
+        self.parent=self.c
+        flow=Beta2Tests.flow(self);options=flow.async_get_options_flow(None)
+        options.config_entry=self.entry;options.hass=flow.hass
+        def update(entry,**kwargs):entry.data=kwargs.get('data',entry.data)
+        options.hass.config_entries.async_update_entry=update
+        initial=await options.async_step_init()
+        self.assertIn('feedback_entity',initial['data_schema'])
+        config={'host':'127.0.0.2','port':7001,'command':'Changed:','feedback_entity':'sensor.changed','feedback_unit':'V'}
+        for i,source in enumerate(self.c.sources):
+            config.update({f'miner_{i}_name':source['name'],f'miner_{i}_base':'changed/'+str(i)})
+            config.update({f'miner_{i}_label_{j}':label for j,label in enumerate(source['labels'])})
+        result=await options.async_step_init(config)
+        self.assertEqual(result['data'],{})
+        self.assertEqual(self.entry.data['host'],'127.0.0.2')
+        self.assertEqual(self.c.sources[0]['base'],'changed/0')
+        self.assertEqual(self.c.valve_feedback['entity_id'],'sensor.changed')
+        self.assertEqual(self.sent,[])
+        self.c.enabled=True
+        result=await options.async_step_init(config)
+        self.assertEqual(result['errors'],{'base':'invalid_device'})
+
     async def test_valve_feedback_configuration_and_restore(self):
         await self.c.command('valve_feedback',{'entity_id':'sensor.ventil','unit':'V'})
         self.assertEqual(self.c.store.data['valve_feedback'],{'entity_id':'sensor.ventil','unit':'V'})
@@ -335,6 +357,7 @@ class Tests(unittest.IsolatedAsyncioTestCase):
             def async_show_form(self, **kwargs):return kwargs
             def async_create_entry(self, **kwargs):return kwargs
         sys.modules['homeassistant.config_entries'].ConfigFlow=FlowBase
+        sys.modules['homeassistant.config_entries'].OptionsFlow=FlowBase
         sys.modules['probatio'].Schema=lambda data:data
         module('homeassistant.helpers.selector')
         spec=importlib.util.spec_from_file_location(package+'.config_flow',ROOT/'config_flow.py')
@@ -452,12 +475,27 @@ class Beta2Tests(unittest.IsolatedAsyncioTestCase):
             async def async_set_unique_id(self, value):self.unique_id=value
             def _abort_if_unique_id_configured(self):pass
         sys.modules['homeassistant.config_entries'].ConfigFlow=FlowBase
+        sys.modules['homeassistant.config_entries'].OptionsFlow=FlowBase
         sys.modules['probatio'].Schema=lambda data:data
-        module('homeassistant.helpers.selector',NumberSelector=lambda x:x,NumberSelectorConfig=lambda **kw:kw,SelectSelector=lambda x:x,SelectSelectorConfig=lambda **kw:kw)
+        module('homeassistant.helpers.selector',EntitySelector=lambda x:x,EntitySelectorConfig=lambda **kw:kw,NumberSelector=lambda x:x,NumberSelectorConfig=lambda **kw:kw,SelectSelector=lambda x:x,SelectSelectorConfig=lambda **kw:kw)
         spec=importlib.util.spec_from_file_location(package+'.config_flow',ROOT/'config_flow.py')
         m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
         flow=m.ConfigFlow();flow.hass=types.SimpleNamespace(data={backend.DOMAIN:{'controller':self.parent}},config_entries=types.SimpleNamespace(async_entries=lambda d:[]))
         return flow
+    async def test_fan_device_options_edit_modbus_and_udp(self):
+        flow=self.flow();options=flow.async_get_options_flow(None)
+        entry=types.SimpleNamespace(entry_id='fanentry',data={'kind':'fan','fan_id':'fan1','config':dict(self.config)})
+        options.config_entry=entry;options.hass=flow.hass
+        def update(entry,**kwargs):entry.data=kwargs.get('data',entry.data)
+        options.hass.config_entries.async_update_entry=update
+        result=await options.async_step_init()
+        self.assertIn('sensor_host',result['data_schema'])
+        config=dict(self.config,sensor_host='127.0.0.2',command='Changed:')
+        result=await options.async_step_init(config)
+        self.assertEqual(result['data'],{})
+        self.assertEqual(entry.data['config']['sensor_host'],'127.0.0.2')
+        self.assertEqual(self.f.config['command'],'Changed:')
+
     async def test_menu_and_new_fan_config_entry(self):
         flow=self.flow()
         self.assertEqual((await flow.async_step_user())['menu_options'],['miner','fan','water'])
@@ -665,6 +703,86 @@ class WaterTests(unittest.IsolatedAsyncioTestCase):
         await self.c.command('settings',self.settings);await self.c.tick(None);self.assertEqual(self.calls,[])
         self.now=self.now.replace(hour=9);self.c.last_top_off=time.time();await self.c.tick(None)
         self.assertNotIn(('switch','turn_on',self.c.entities['top_switch']),self.calls)
+
+    async def test_top_timer_only_when_normal_off_and_sperrzeit_elapsed(self):
+        await self.enable()
+        with self.assertRaises(ValueError):await self.c.command('top_timer_start',{'hours':0,'minutes':1})
+        await self.c.command('enable',False);await self.c.tick(None)
+        self.c.last_top_off=time.time()
+        with self.assertRaises(ValueError):await self.c.command('top_timer_start',{'hours':0,'minutes':1})
+        self.c.last_top_off=time.time()-121
+        await self.c.command('top_timer_start',{'hours':0,'minutes':1})
+        self.assertTrue(self.c.store.data['top_timer_owned'])
+        with self.assertRaises(ValueError):await self.enable()
+    async def test_top_timer_expiry_and_sperrzeit_and_parallel_bottom(self):
+        await self.c.command('top_timer_start',{'hours':0,'minutes':1})
+        await self.c.command('timer_start',{'hours':0,'minutes':2})
+        self.feedback('top_feedback','on');self.feedback('bottom_feedback','on');await self.c.tick(None)
+        self.assertTrue(self.c.top_timer_confirmed);self.assertTrue(self.c.timer_confirmed)
+        self.c.top_timer_deadline=time.monotonic()-1;await self.c.tick(None)
+        self.assertEqual(self.calls[-1],('switch','turn_off',self.c.entities['top_switch']))
+        self.feedback('top_feedback','off');await self.c.tick(None)
+        self.assertFalse(self.c.top_timer_owned);self.assertGreater(self.c.remaining(),110)
+        self.assertTrue(self.c.timer_owned)
+    async def test_top_timer_invalid_duration_and_unconfirmed_on(self):
+        for value in [None,{'hours':0,'minutes':0},{'hours':24,'minutes':0},{'hours':False,'minutes':1},{'hours':0,'minutes':60}]:
+            with self.assertRaises(ValueError):await self.c.command('top_timer_start',value)
+        self.assertEqual(self.calls,[])
+        await self.c.command('top_timer_start',{'hours':0,'minutes':1})
+        self.c.pending['top']['sent']-=16;await self.c.tick(None)
+        self.assertIsNone(self.c.top_timer_deadline)
+        self.assertEqual(self.calls[-1][1],'turn_off')
+    async def test_top_timer_external_off_never_restarts(self):
+        await self.c.command('top_timer_start',{'hours':0,'minutes':1})
+        self.feedback('top_feedback','on');await self.c.tick(None)
+        self.feedback('top_feedback','off');await self.c.tick(None);await self.c.tick(None)
+        self.assertFalse(self.c.top_timer_owned)
+        self.assertEqual(sum(action=='turn_on' for _,action,_ in self.calls),1)
+
+    async def test_top_timer_stop_and_unavailable_feedback(self):
+        await self.c.command('top_timer_start',{'hours':0,'minutes':1})
+        self.feedback('top_feedback','on');await self.c.tick(None)
+        self.feedback('top_feedback','unavailable');await self.c.tick(None)
+        self.assertIsNone(self.c.top_timer_deadline)
+        self.assertEqual(self.calls[-1][1],'turn_off')
+        self.c.pending['top']['sent']-=16;await self.c.tick(None)
+        self.assertEqual(self.calls[-1][1],'turn_off')
+        self.feedback('top_feedback','off');await self.c.tick(None)
+        self.c.last_top_off=time.time()-121
+        await self.c.command('top_timer_start',{'hours':0,'minutes':1});await self.c.command('top_timer_stop',None)
+        self.assertIsNone(self.c.top_timer_deadline)
+    async def test_top_timer_legionella_takes_over_after_off_feedback(self):
+        await self.c.command('top_timer_start',{'hours':1,'minutes':0})
+        self.feedback('top_feedback','on');await self.c.tick(None)
+        self.settings.update(legionella_enabled=True,legionella_target=60,legionella_from='08:00',legionella_until='09:00',legionella_days=[0])
+        await self.c.command('settings',self.settings);self.calls.clear();await self.c.tick(None)
+        self.assertEqual(self.calls,[('switch','turn_off',self.c.entities['top_switch'])])
+        self.feedback('top_feedback','off');await self.c.tick(None)
+        self.assertIsNone(self.c.top_timer_deadline)
+        with self.assertRaises(ValueError):await self.c.command('top_timer_start',{'hours':0,'minutes':1})
+    async def test_top_timer_restart_recovers_with_off_only(self):
+        await self.c.command('top_timer_start',{'hours':0,'minutes':1})
+        self.feedback('top_feedback','on');self.calls.clear()
+        other=self.water_module.WaterController(self.parent,self.entry);other.store=self.c.store
+        await other.start()
+        self.assertEqual(self.calls,[('switch','turn_off',self.c.entities['top_switch'])])
+        self.assertIsNone(other.top_timer_deadline)
+        self.feedback('top_feedback','off');await other.tick(None);await other.stop()
+    async def test_water_device_options_prepopulate_and_change_entities(self):
+        self.parent.waters={'water1':self.c}
+        flow=Beta2Tests.flow(self);options=flow.async_get_options_flow(self.entry)
+        self.entry.data['kind']='water';self.entry.entry_id='waterentry';options.config_entry=self.entry;options.hass=self.hass
+        self.hass.data={backend.DOMAIN:{'controller':self.parent}}
+        def update(entry,**kwargs):entry.data=kwargs['data']
+        self.hass.config_entries=types.SimpleNamespace(async_update_entry=update,async_reload=AsyncMock())
+        selectors=sys.modules['homeassistant.helpers.selector']
+        selectors.EntitySelector=lambda x:x;selectors.EntitySelectorConfig=lambda **kw:kw
+        result=await options.async_step_init()
+        self.assertIn('top_temperature',result['data_schema'])
+        entities=dict(self.c.entities,top_temperature='sensor.other_top')
+        result=await options.async_step_init(entities)
+        self.assertEqual(result['data'],{});self.assertEqual(self.entry.data['entities']['top_temperature'],'sensor.other_top')
+        self.hass.config_entries.async_reload.assert_awaited_once_with('waterentry')
 
     async def test_timer_start_expire_and_confirm_off(self):
         await self.c.command('timer_start',{'hours':0,'minutes':1})
