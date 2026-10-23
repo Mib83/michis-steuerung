@@ -53,4 +53,4 @@ export class WaterCard extends HTMLElement {
  const signature=JSON.stringify(s.windows||[]);if(this.windowsSignature!==signature){this.windowsSignature=signature;this.windows=(s.windows?.length?s.windows:[{days:[],on:'',off:''}]).map(w=>({...w,id:'w'+(++this.counter)}));this.renderWindows();}}
  }
 }
-if(!customElements.get('michis-water-card-030'))customElements.define('michis-water-card-030',WaterCard);
+if(!customElements.get('michis-water-card-031'))customElements.define('michis-water-card-031',WaterCard);

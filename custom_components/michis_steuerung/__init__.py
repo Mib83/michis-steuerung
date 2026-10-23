@@ -1,4 +1,5 @@
 """MQTT-fed controller and authenticated custom UI for HA 2026.10."""
+import re
 import asyncio
 from homeassistant.config_entries import ConfigEntryDisabler
 from collections import deque
@@ -43,6 +44,7 @@ class Controller:
         self.fans = {}
         self.waters = {}
         self.legacy_fans = []
+        self.valve_feedback = {'entity_id':'sensor.miningraum_grundwasser_3wege','unit':'V'}
         self.sources = [{'name': miner.upper().replace('_', '-'),
             'base': f"{entry.data['prefix']}/{miner}",
             'labels': [f'Slot {i}' for i in range(4)]}
@@ -70,6 +72,10 @@ class Controller:
             except (ValueError, TypeError):
                 pass
         self.legacy_fans = (saved or {}).get('fans', [])
+        try:
+            self.valve_feedback = self.validate_valve_feedback((saved or {}).get('valve_feedback',self.valve_feedback))
+        except (ValueError,TypeError):
+            pass
         # Every startup deliberately requires manual enable; no startup UDP output.
         self.enabled = False
         await self.subscribe_sources(self.sources)
@@ -108,6 +114,39 @@ class Controller:
         self.samples.clear()
         self.reset_jump_detection()
 
+    @staticmethod
+    def validate_valve_feedback(value):
+        if not isinstance(value,dict) or set(value) != {'entity_id','unit'}:
+            raise ValueError('Entitäts-ID und Einheit erforderlich')
+        entity = value['entity_id']
+        if not isinstance(entity,str):
+            raise ValueError('Ungültige Entitäts-ID')
+        entity = entity.strip()
+        if entity and not re.fullmatch(r'(sensor|number|input_number)\.[a-z0-9_]+',entity):
+            raise ValueError('Entitäts-ID als sensor.name, number.name oder input_number.name angeben')
+        if value['unit'] not in ('V','%'):
+            raise ValueError('Einheit V oder % wählen')
+        return {'entity_id':entity,'unit':value['unit']}
+
+    def feedback_snapshot(self):
+        config = dict(self.valve_feedback)
+        result = {**config,'value':None,'status':'Nicht eingerichtet'}
+        if not config['entity_id']:
+            return result
+        states = getattr(self.hass,'states',None)
+        state = states.get(config['entity_id']) if states else None
+        if state is None:
+            result['status'] = 'Entität nicht gefunden'
+            return result
+        try:
+            value = finite(state.state)
+            if not 0 <= value <= (10 if config['unit']=='V' else 100):
+                raise ValueError('Bereich')
+            result.update(value=value,status='PyLoxone-Rückmeldung')
+        except (ValueError,TypeError):
+            result['status'] = 'Rückmeldung nicht verfügbar oder außerhalb des gewählten Bereichs'
+        return result
+
     def snapshot(self, history_periods=None):
         now = time.monotonic()
         miners, valid = [], []
@@ -140,14 +179,14 @@ class Controller:
             status = 'Kühlung reduzieren' if self.output > 0 else 'Untergrenze 0 V erreicht'
         else:
             status = 'Temperatur im gewünschten Bereich'
-        return {'waters': [water.snapshot() for water in self.waters.values()], 'fans': [fan.snapshot((history_periods or {}).get(fan.fan_id, 3600)) for fan in self.fans.values()], 'fast_pending': self.pending_jump is not None, 'last_fast_event': self.last_fast_event, 'sources': self.sources, 'settings': self.settings, 'output': self.output, 'enabled': self.enabled,
+        return {'valve_feedback': self.feedback_snapshot(), 'waters': [water.snapshot() for water in self.waters.values()], 'fans': [fan.snapshot((history_periods or {}).get(fan.fan_id, 3600)) for fan in self.fans.values()], 'fast_pending': self.pending_jump is not None, 'last_fast_event': self.last_fast_event, 'sources': self.sources, 'settings': self.settings, 'output': self.output, 'enabled': self.enabled,
             'miners': miners, 'maximum': maximum, 'ready': ready, 'valid_count': len(valid),
             'remaining': round(remaining,1), 'status': status,
             'last_message': self.last_message, 'sent_output': self.last_sent_output, 'last_error': self.last_error,
             'history': chart_history(self.history, (history_periods or {}).get('miner', 3600)), 'target': f"{self.entry.data['host']}:{self.entry.data['port']}", 'version': VERSION}
 
     async def save(self):
-        await self.store.async_save({'settings': self.settings, 'output': self.output, 'last_sent_output': self.last_sent_output, 'sources': self.sources, 'fans': self.legacy_fans})
+        await self.store.async_save({'settings': self.settings, 'output': self.output, 'last_sent_output': self.last_sent_output, 'sources': self.sources, 'fans': self.legacy_fans, 'valve_feedback': self.valve_feedback})
 
     def output_limits(self):
         return 0, 10
@@ -270,7 +309,10 @@ class Controller:
         if action in ('fan_add', 'fan_command'):
             return await self.fan_action(action, value)
         async with self.lock:
-            if action == 'settings':
+            if action == 'valve_feedback':
+                self.valve_feedback = self.validate_valve_feedback(value)
+                await self.save()
+            elif action == 'settings':
                 self.settings = validate_settings(value)
                 self.reset_jump_detection()
                 await self.save()
@@ -380,7 +422,7 @@ async def async_setup_entry(hass, entry):
         await controller.start()
         await controller.save()
         await panel_custom.async_register_panel(hass,
-            frontend_url_path=DOMAIN, webcomponent_name='michis-steuerung-panel-030',
+            frontend_url_path=DOMAIN, webcomponent_name='michis-steuerung-panel-031',
             sidebar_title=NAME, sidebar_icon='mdi:coolant-temperature',
             module_url=f'/{DOMAIN}/panel.js?v={UI_BUILD}', require_admin=True)
     except Exception:

@@ -48,4 +48,4 @@ export class FanCard extends HTMLElement {
  if(this.drawGraph)this.drawGraph(state);
  }
 }
-if(!customElements.get('michis-fan-card-030'))customElements.define('michis-fan-card-030',FanCard);
+if(!customElements.get('michis-fan-card-031'))customElements.define('michis-fan-card-031',FanCard);
