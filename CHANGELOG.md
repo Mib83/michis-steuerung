@@ -1,3 +1,11 @@
+# V0.3.2 (0.3.2)
+
+- Neuer manueller 4-kW-Timer neben dem 7,5-kW-Timer; Restzeiten jeweils unter Start/Stopp.
+- 4-kW-Timer nur bei ausgeschalteter Normalautomatik, abgelaufener Sperrzeit und ohne aktives Legionellenprogramm. Ein beginnendes Legionellenprogramm beendet den Timer und übernimmt nach bestätigtem Aus und Sperrzeit.
+- Alle Geräte bieten wieder nachträgliche Zuordnung über Konfigurieren: MQTT-Quellen/Namen, UDP-Ziel, Modbus-Verbindung, Sensoren, Schalt- und Rückmeldeentitäten.
+- Ventil-Rückmeldung kleiner rechts neben dem Stellwert, ohne „aus Loxone“ in der Überschrift. Konfiguration ausschließlich unter Geräteeinstellungen.
+- 99 simulierte Backend-Tests und UI-Verhaltenstests bestanden; Browser-Vorschau auf Desktop und schmaler Ansicht geprüft.
+
 # V0.3.1 (0.3.1)
 
 - Optionale Ventil-Rückmeldung aus einer editierbaren Home-Assistant-Entitäts-ID.
