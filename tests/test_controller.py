@@ -90,6 +90,77 @@ class Tests(unittest.IsolatedAsyncioTestCase):
         result=await options.async_step_init(config)
         self.assertEqual(result['errors'],{'base':'invalid_device'})
 
+    async def test_delayed_hottest_holds_output_and_charts_gap(self):
+        self.fill(40)
+        topics=[t for t in self.c.samples if '/sm' in t]
+        for t in self.c.samples:self.c.samples[t]=(40,100.)
+        hottest=topics[0];self.c.samples[hottest]=(45,100.)
+        self.c.enabled=True;self.c.last_sent=100.;self.c.last_history=0
+        with patch.object(backend.time,'monotonic',return_value=108.):
+            await self.c.tick(None)
+            state=self.c.snapshot()
+        self.assertTrue(state['freshness']['late']);self.assertEqual(self.sent,[])
+        self.assertIsNone(self.c.history[-1]['temperature'])
+        self.c.samples[topics[1]]=(40,110.)
+        with patch.object(backend.time,'monotonic',return_value=110.):await self.c.tick(None)
+        self.assertEqual(self.sent,[])
+        self.c.samples[hottest]=(45,111.)
+        with patch.object(backend.time,'monotonic',return_value=111.):
+            await self.c.tick(None);self.assertGreater(self.c.snapshot()['remaining'],0)
+        self.assertEqual(self.sent,[])
+        self.c.samples[hottest]=(45,120.)
+        with patch.object(backend.time,'monotonic',return_value=120.):await self.c.tick(None)
+        self.assertEqual(self.c.output,4.2);self.assertEqual(len(self.sent),1)
+        self.c.last_sent=120.
+        with patch.object(backend.time,'monotonic',return_value=121.):await self.c.tick(None)
+        self.assertEqual(len(self.sent),1)
+    async def test_late_equal_payload_detected_even_before_next_tick(self):
+        self.fill(40);topics=[t for t in self.c.samples if '/sm' in t]
+        for t in self.c.samples:self.c.samples[t]=(40,100.)
+        hottest=topics[0];self.c.samples[hottest]=(45,100.)
+        self.c.last_sent=100.;self.c.enabled=True
+        with patch.object(backend.time,'monotonic',return_value=111.):
+            callbacks[hottest](types.SimpleNamespace(payload='45',retain=False))
+            await self.c.tick(None)
+            state=self.c.snapshot()
+        self.assertTrue(state['freshness']['fresh']);self.assertTrue(state['freshness']['after_send'])
+        self.assertGreater(state['freshness']['extension'],0);self.assertEqual(self.sent,[])
+    async def test_fast_step_cannot_bypass_extended_pause(self):
+        self.fill(40);topics=[t for t in self.c.samples if '/sm' in t]
+        for t in self.c.samples:self.c.samples[t]=(40,100.)
+        hottest=topics[0];self.c.samples[hottest]=(45,100.)
+        self.c.last_sent=100.;self.c.enabled=True
+        with patch.object(backend.time,'monotonic',return_value=108.):await self.c.tick(None)
+        with patch.object(backend.time,'monotonic',return_value=111.):
+            callbacks[hottest](types.SimpleNamespace(payload='45',retain=False));await self.c.tick(None)
+        with patch.object(backend.time,'monotonic',return_value=112.):
+            callbacks[hottest](types.SimpleNamespace(payload='49',retain=False));await self.c.tick(None)
+        self.assertEqual(self.sent,[])
+        with patch.object(backend.time,'monotonic',return_value=117.):
+            callbacks[hottest](types.SimpleNamespace(payload='49',retain=False));await self.c.tick(None)
+        with patch.object(backend.time,'monotonic',return_value=120.):
+            callbacks[hottest](types.SimpleNamespace(payload='49',retain=False));await self.c.tick(None)
+        self.assertEqual(self.c.output,4.6);self.assertEqual(len(self.sent),1)
+
+    async def test_short_gap_between_history_ticks_is_visible(self):
+        self.fill(40);topics=[t for t in self.c.samples if '/sm' in t]
+        for t in self.c.samples:self.c.samples[t]=(40,100.)
+        hottest=topics[0];self.c.samples[hottest]=(45,100.)
+        self.c.history.clear();self.c.history.append({'t':1,'temperature':45,'output':4})
+        self.c.last_history=107.;self.c.last_sent=100.;self.c.enabled=True
+        with patch.object(backend.time,'monotonic',return_value=108.):
+            callbacks[hottest](types.SimpleNamespace(payload='45',retain=False))
+            await self.c.tick(None)
+        self.assertTrue(any(point['temperature'] is None for point in self.c.history))
+
+    async def test_guard_settings_persist_and_legacy_restore_default(self):
+        await self.c.command('freshness',{'enabled':True,'interval':6,'tolerance':3,'misses':1})
+        self.assertEqual(self.c.store.data['freshness']['interval'],6)
+        other=backend.Controller(self.c.hass,self.c.entry);other.store=self.c.store;await other.start()
+        self.assertEqual(other.hottest_guard.config['misses'],1);await other.stop()
+        for value in [{'enabled':True,'interval':0,'tolerance':2,'misses':0},{'enabled':True,'interval':5,'tolerance':2,'misses':3}]:
+            with self.assertRaises(ValueError):await self.c.command('freshness',value)
+
     async def test_valve_feedback_configuration_and_restore(self):
         await self.c.command('valve_feedback',{'entity_id':'sensor.ventil','unit':'V'})
         self.assertEqual(self.c.store.data['valve_feedback'],{'entity_id':'sensor.ventil','unit':'V'})
@@ -856,5 +927,58 @@ class WaterTests(unittest.IsolatedAsyncioTestCase):
         for value in ['unknown','unavailable','nan','9999']:
             self.assertIsNone(parse(types.SimpleNamespace(state=value,attributes={})))
         self.assertIsNone(self.water_module.state_binary(types.SimpleNamespace(state='unknown')))
+
+class FreshnessTests(unittest.TestCase):
+    def setUp(self):
+        from controller_under_test.freshness import HottestGuard
+        self.guard=HottestGuard()
+        self.sources=[{'name':'Miner','base':'miner','labels':['A','B','C','D']}]
+        self.samples={'miner/sm0/state':(50,0.),'miner/sm1/state':(40,0.)}
+    def info(self,now,last=0):return self.guard.snapshot(self.samples,self.sources,last,15,now)
+    def tick(self,now,last=0):return self.guard.update(self.samples,self.sources,last,15,now)
+    def test_only_hottest_age_matters_and_equal_payload_is_new(self):
+        self.samples['miner/sm0/state']=(50,10.)
+        self.assertTrue(self.info(11)['allow'])
+        self.samples['miner/sm0/state']=(50,15.)
+        self.assertTrue(self.info(16,14)['allow'])
+        self.assertFalse(self.info(16,15)['allow'])
+    def test_all_tied_hottest_channels_must_be_fresh(self):
+        self.samples['miner/sm1/state']=(50,10.)
+        self.assertTrue(self.info(11)['late'])
+        self.samples['miner/sm0/state']=(50,10.)
+        self.assertFalse(self.info(11)['late'])
+    def test_fresher_higher_channel_takes_over(self):
+        self.assertTrue(self.info(10)['late'])
+        self.samples['miner/sm1/state']=(51,10.)
+        self.assertTrue(self.info(11)['allow'])
+        self.assertEqual(self.info(11)['topics'],['miner/sm1/state'])
+    def test_expired_hottest_not_replaced_by_lower_fresh_channel(self):
+        self.samples['miner/sm1/state']=(40,40.)
+        self.assertTrue(self.info(40)['late'])
+        self.assertEqual(self.info(40)['topics'],['miner/sm0/state'])
+    def test_gap_freezes_pause_then_resume_without_catchup(self):
+        self.tick(8)
+        self.assertAlmostEqual(self.info(8)['remaining'],8)
+        self.assertAlmostEqual(self.info(12)['remaining'],8)
+        self.samples['miner/sm0/state']=(50,14.)
+        self.assertTrue(self.tick(14))
+        self.assertAlmostEqual(self.info(14)['remaining'],8)
+        self.samples['miner/sm0/state']=(50,20.)
+        self.tick(20);self.assertAlmostEqual(self.info(20)['remaining'],2)
+        self.guard.reset();self.assertEqual(self.info(20,20)['remaining'],15)
+    def test_gap_before_last_send_not_added_to_new_pause(self):
+        self.tick(101,last=100)
+        self.assertEqual(self.info(101,last=100)['remaining'],15)
+        self.samples['miner/sm0/state']=(50,102.)
+        self.guard.update(self.samples,self.sources,100,15,102)
+        self.assertEqual(self.info(102,last=100)['extension'],2)
+
+    def test_missed_intervals_and_disabled_mode(self):
+        self.guard.config['misses']=1
+        self.assertFalse(self.info(11)['late']);self.assertTrue(self.info(13)['late'])
+        self.guard.config['misses']=2
+        self.assertFalse(self.info(16)['late']);self.assertTrue(self.info(18)['late'])
+        self.guard.config['enabled']=False
+        self.assertTrue(self.info(100)['allow']);self.assertTrue(self.info(100)['fresh'])
 
 if __name__=='__main__':unittest.main(verbosity=2)
