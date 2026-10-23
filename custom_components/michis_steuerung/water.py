@@ -56,6 +56,10 @@ class WaterController:
         self.timer_owned = False
         self.timer_confirmed = False
         self.timer_error = None
+        self.top_timer_deadline = None
+        self.top_timer_owned = False
+        self.top_timer_confirmed = False
+        self.top_timer_error = None
 
     def read(self, key):
         return self.hass.states.get(self.entities[key])
@@ -87,6 +91,10 @@ class WaterController:
             value = saved.get('last_top_off')
             if value is not None:
                 self.last_top_off = min(finite(value),time.time())
+        if saved and saved.get('top_timer_owned'):
+            self.top_timer_owned = True
+            self.top_timer_error = '4-kW-Timer nach Neustart beendet'
+            await self.top_timer_off()
         if saved and saved.get('timer_owned'):
             self.timer_owned = True
             self.timer_error = 'Timer nach Neustart beendet'
@@ -106,7 +114,7 @@ class WaterController:
         # No startup commands; enabling always requires a deliberate user action.
 
     async def save(self):
-        await self.store.async_save({'settings':self.settings,'configured':self.configured(),'last_top_off':self.last_top_off,'timer_owned':self.timer_owned})
+        await self.store.async_save({'settings':self.settings,'configured':self.configured(),'last_top_off':self.last_top_off,'timer_owned':self.timer_owned,'top_timer_owned':self.top_timer_owned})
         self.persistence_dirty = False
 
     def snapshot(self):
@@ -131,6 +139,10 @@ class WaterController:
             if demand['legionella']:
                 status = 'Legionellenprogramm · nur oberer Heizstab' + (' · Sperrzeit aktiv' if remaining>0 else '')
         return {'id':self.water_id,'name':self.name,'settings':copy.deepcopy(self.settings),
+            'top_timer_active':self.top_timer_deadline is not None,
+            'top_timer_remaining':max(0,round(self.top_timer_deadline-time.monotonic())) if self.top_timer_deadline is not None else 0,
+            'top_timer_error':self.top_timer_error,'top_timer_stopping':self.top_timer_owned and self.top_timer_deadline is None,
+            'top_timer_available':not self.enabled and not self.legionella_active() and not self.top_timer_owned and 'top' not in self.pending and self.remaining()<=0 and self.settings['wait_off'] is not None and state_binary(self.read('top_switch')) is not None and state_binary(self.read('top_feedback')) is False,
             'timer_active':self.timer_deadline is not None,
             'timer_remaining':max(0,round(self.timer_deadline-time.monotonic())) if self.timer_deadline is not None else 0,
             'timer_error':self.timer_error,'timer_stopping':self.timer_owned and self.timer_deadline is None,
@@ -138,7 +150,7 @@ class WaterController:
             'entities':dict(self.entities),'top_temperature':top,'bottom_temperature':bottom,
             'top_on':state_binary(self.read('top_feedback')),'bottom_on':state_binary(self.read('bottom_feedback')),
             'pump_on':state_binary(self.read('pump_feedback')),'enabled':self.enabled,
-            'enable_available':self.enabled or (configured and ready and not any(k != 'bottom' for k in self.pending)),
+            'enable_available':self.enabled or (configured and ready and not self.top_timer_owned and not any(k != 'bottom' for k in self.pending)),
             'wait_remaining':round(remaining,1),'status':status,'last_error':self.last_error,'last_message':self.last_message}
 
     async def drive(self,key,desired,force=False):
@@ -170,6 +182,53 @@ class WaterController:
             except Exception:
                 self.last_error += ' · Ausschalten '+('oberer Heizstab' if key == 'top' else 'Zirkulationspumpe')+' nicht bestätigt'
         # No automatic restart after a fault.
+
+    async def top_timer_off(self):
+        self.top_timer_deadline = None
+        try:
+            await self.drive('top',False,force=True)
+        except Exception:
+            self.top_timer_error = '4-kW-Heizstab: Ausschalten fehlgeschlagen; Rückmeldung prüfen'
+        await self.save()
+
+    async def top_timer_tick(self):
+        if not self.top_timer_owned:
+            return
+        feedback = state_binary(self.read('top_feedback'))
+        if self.top_timer_deadline is None:
+            if feedback is False:
+                pending=self.pending.pop('top',None)
+                if pending and (self.last_top_off is None or self.last_top_off < pending['sent_wall']):
+                    self.last_top_off=time.time()
+                self.top_timer_owned=False
+                await self.save()
+            else:
+                pending=self.pending.get('top')
+                if not pending or time.monotonic()-pending['sent']>=15:
+                    await self.top_timer_off()
+            return
+        if self.legionella_active():
+            self.top_timer_error='4-kW-Timer beendet · Legionellenprogramm hat Vorrang'
+            await self.top_timer_off()
+            return
+        if time.monotonic()>=self.top_timer_deadline:
+            await self.top_timer_off()
+            return
+        if feedback is None or state_binary(self.read('top_switch')) is None:
+            self.top_timer_error='4-kW-Timer beendet · Rückmeldung nicht verfügbar'
+            await self.top_timer_off()
+            return
+        if self.top_timer_confirmed and feedback is False:
+            self.top_timer_error='4-kW-Timer beendet · Heizstab extern ausgeschaltet'
+            await self.top_timer_off()
+            return
+        try:
+            await self.drive('top',True)
+            if feedback is True:
+                self.top_timer_confirmed=True
+        except Exception:
+            self.top_timer_error='4-kW-Timer beendet · Einschalten nicht bestätigt'
+            await self.top_timer_off()
 
     async def timer_off(self):
         self.timer_deadline = None
@@ -218,11 +277,12 @@ class WaterController:
             if self.stopping:
                 return
             await self.timer_tick()
+            await self.top_timer_tick()
             if self.persistence_dirty:
                 await self.save()
             # Acknowledge outstanding OFF commands even with automation disabled.
             for key,pending in list(self.pending.items()):
-                if key == 'bottom':
+                if key == 'bottom' or (key=='top' and self.top_timer_owned):
                     continue
                 if state_binary(self.read(key+'_feedback')) == pending['desired']:
                     if key == 'top' and not pending['desired'] and (self.last_top_off is None or self.last_top_off < pending['sent_wall']):
@@ -232,6 +292,8 @@ class WaterController:
                 elif not self.enabled and time.monotonic()-pending['sent'] > 15:
                     self.pending.pop(key,None)
                     self.last_error = 'Ausschalten nicht durch Loxone bestätigt · Automatik aus'
+            if self.top_timer_owned:
+                return
             active = self.legionella_active()
             if self.last_error and not self.enabled:
                 return
@@ -256,7 +318,29 @@ class WaterController:
 
     async def command(self,action,value):
         async with self.lock:
-            if action == 'timer_start':
+            if action == 'top_timer_start':
+                if not isinstance(value,dict) or set(value)!={'hours','minutes'}:
+                    raise ValueError('Stunden und Minuten erforderlich')
+                hours,minutes=value['hours'],value['minutes']
+                if type(hours) is not int or type(minutes) is not int or not 0<=hours<=23 or not 0<=minutes<=59 or hours*60+minutes==0:
+                    raise ValueError('Dauer zwischen 1 Minute und 23 Stunden 59 Minuten wählen')
+                if not self.snapshot()['top_timer_available']:
+                    raise ValueError('Normalautomatik ausschalten, Sperrzeit abwarten und bestätigtes Aus prüfen; kein aktives Legionellenprogramm')
+                self.top_timer_error=None
+                self.top_timer_confirmed=False
+                self.top_timer_owned=True
+                await self.save()
+                self.top_timer_deadline=time.monotonic()+hours*3600+minutes*60
+                try:
+                    await self.drive('top',True)
+                except Exception as error:
+                    self.top_timer_error='4-kW-Heizstab: Einschalten fehlgeschlagen'
+                    await self.top_timer_off()
+                    raise ValueError(self.top_timer_error) from error
+            elif action == 'top_timer_stop':
+                if self.top_timer_owned:
+                    await self.top_timer_off()
+            elif action == 'timer_start':
                 if not isinstance(value,dict) or set(value) != {'hours','minutes'}:
                     raise ValueError('Stunden und Minuten erforderlich')
                 hours,minutes = value['hours'],value['minutes']
@@ -288,14 +372,14 @@ class WaterController:
                 if not isinstance(value,bool):
                     raise ValueError('Schalterwert ungültig')
                 if value:
-                    if not self.configured() or not self.ready() or any(k != 'bottom' for k in self.pending):
+                    if self.top_timer_owned or not self.configured() or not self.ready() or any(k != 'bottom' for k in self.pending):
                         raise ValueError('Gültige Einstellungen, Temperatur und bestätigte Loxone-Rückmeldungen erforderlich')
                     self.last_error = None
                     self.enabled = True
                 else:
                     self.enabled = False
                     try:
-                        if not self.legionella_active():
+                        if not self.legionella_active() and not self.top_timer_owned:
                             await self.drive('top',False)
                             await self.drive('pump',False)
                     except Exception as error:
@@ -311,6 +395,8 @@ class WaterController:
             unsubscribe()
         self.unsubscribers.clear()
         async with self.lock:
+            if self.top_timer_owned:
+                await self.top_timer_off()
             if self.timer_owned:
                 await self.timer_off()
             if self.enabled or self.program_owned:

@@ -4,10 +4,17 @@ import ipaddress
 import probatio as vol
 from homeassistant import config_entries
 from homeassistant.helpers import selector
+from homeassistant.core import callback
 from .const import DOMAIN, NAME, LEGACY_DOMAIN, CONTROLLER_NAME
 
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     VERSION = 1
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry):
+        return DeviceOptionsFlow()
+
 
     async def async_step_user(self, user_input=None):
         if user_input is None:
@@ -133,3 +140,82 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             schema[vol.Required(key,default=(user_input or {}).get(key,default))] = selector.EntitySelector(selector.EntitySelectorConfig(domain=domain))
         return self.async_show_form(step_id='water',data_schema=vol.Schema(schema),errors=errors,
             description_placeholders={'error':getattr(self,'_water_error','')})
+
+
+class DeviceOptionsFlow(config_entries.OptionsFlow):
+    """Edit the existing source/output mappings through the HA Configure button."""
+
+    async def async_step_init(self, user_input=None):
+        from . import Controller, validate_water_outputs
+        from .engine import validate_sources
+        from .fan import validate_config
+        from .water_engine import validate_entities
+        parent = self.hass.data.get(DOMAIN,{}).get('controller')
+        if parent is None:
+            return self.async_abort(reason='controller_not_ready')
+        entry = self.config_entry
+        kind = entry.data.get('kind','miner')
+        errors = {}
+        runtime = parent.fans.get(entry.data.get('fan_id')) if kind=='fan' else parent.waters.get(entry.data.get('water_id')) if kind=='water' else parent
+        if runtime is None:
+            return self.async_abort(reason='controller_not_ready')
+        defaults = {}
+        if kind=='fan':
+            defaults = dict(runtime.config)
+        elif kind=='water':
+            defaults = dict(runtime.entities)
+        else:
+            defaults = {k:entry.data[k] for k in ('host','port','command')}
+            defaults.update(feedback_entity=parent.valve_feedback['entity_id'],feedback_unit=parent.valve_feedback['unit'])
+            for i,source in enumerate(parent.sources):
+                defaults.update({f'miner_{i}_name':source['name'],f'miner_{i}_base':source['base']})
+                defaults.update({f'miner_{i}_label_{j}':label for j,label in enumerate(source['labels'])})
+        if user_input is not None:
+            try:
+                if runtime.enabled or (kind=='water' and (runtime.legionella_active() or runtime.timer_owned or runtime.top_timer_owned or runtime.program_owned)):
+                    raise ValueError('Vor dem Ändern Automatik und Timer ausschalten')
+                if kind=='water':
+                    entities = validate_entities(user_input)
+                    others = type('OtherControllers',(),{'waters':{k:v for k,v in parent.waters.items() if v is not runtime}})()
+                    validate_water_outputs(others,entities)
+                    if runtime.pending:
+                        raise ValueError('Auf bestätigtes Ausschalten warten')
+                    await runtime.stop()
+                    self.hass.config_entries.async_update_entry(entry,data={**entry.data,'entities':entities})
+                    await self.hass.config_entries.async_reload(entry.entry_id)
+                elif kind=='fan':
+                    config = validate_config(user_input)
+                    parent.validate_fan_target(config,runtime.fan_id)
+                    await runtime.command('config',config)
+                    self.hass.config_entries.async_update_entry(entry,data={**entry.data,'config':config},title=config['name'])
+                else:
+                    ip = ipaddress.ip_address(user_input['host'].strip())
+                    port = int(user_input['port']);command = user_input['command'].strip()
+                    if ip.version!=4 or not 1<=port<=65535 or not command or len(command)>100 or any(c in command for c in '\r\n'):
+                        raise ValueError('UDP-Ziel ungültig')
+                    feedback = Controller.validate_valve_feedback({'entity_id':user_input.get('feedback_entity',''),'unit':user_input['feedback_unit']})
+                    sources = validate_sources([{'name':user_input[f'miner_{i}_name'],'base':user_input[f'miner_{i}_base'],'labels':[user_input[f'miner_{i}_label_{j}'] for j in range(4)]} for i in range(4)])
+                    await parent.command('sources',sources)
+                    await parent.command('valve_feedback',feedback)
+                    self.hass.config_entries.async_update_entry(entry,data={**entry.data,'host':str(ip),'port':port,'command':command})
+                return self.async_create_entry(title='',data={})
+            except (ValueError,TypeError,KeyError) as error:
+                errors['base']='invalid_device'
+                self._error=str(error)
+        defaults.update(user_input or {})
+        schema={}
+        for key,value in defaults.items():
+            typ=str
+            if kind=='water':
+                domain='sensor' if key.endswith('temperature') else 'switch' if key.endswith('switch') else 'binary_sensor'
+                typ=selector.EntitySelector(selector.EntitySelectorConfig(domain=domain))
+            elif key in ('port','sensor_port','unit','minimum','maximum'):
+                low,high,step=(0,10,.1) if key in ('minimum','maximum') else (0 if key=='unit' else 1,255 if key=='unit' else 65535,1)
+                typ=selector.NumberSelector(selector.NumberSelectorConfig(min=low,max=high,step=step,mode='box'))
+            elif key in ('feedback_unit','off_mode'):
+                options=['V','%'] if key=='feedback_unit' else ['minimum','hold','zero']
+                typ=selector.SelectSelector(selector.SelectSelectorConfig(options=options,mode='dropdown'))
+            marker=vol.Optional(key,default=value) if key=='feedback_entity' else vol.Required(key,default=value)
+            schema[marker]=typ
+        return self.async_show_form(step_id='init',data_schema=vol.Schema(schema),errors=errors,
+            description_placeholders={'error':getattr(self,'_error','')})
