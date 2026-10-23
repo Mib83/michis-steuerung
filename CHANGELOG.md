@@ -1,3 +1,11 @@
+# V0.3.1 (0.3.1)
+
+- Optionale Ventil-Rückmeldung aus einer editierbaren Home-Assistant-Entitäts-ID.
+- Vorbelegt: sensor.miningraum_grundwasser_3wege, 0–10 V.
+- Anzeige getrennt vom gesendeten Stellwert; fehlende und ungültige Werte werden kenntlich gemacht.
+- Wertebereich 0–10 V oder 0–100 % auswählbar. Regellogik unverändert.
+- 89 simulierte Backend-Tests bestanden.
+
 # V0.3 (0.3.0)
 
 - Legionellenschutz mit eigenem Schiebeschalter, unabhängig von der normalen Warmwasser-Automatik.

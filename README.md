@@ -1,6 +1,6 @@
 # Michi´s Steuerung
 
-Stabile Version **V0.3 (0.3.0)** für Home Assistant. Eine lokale Steuerung für wassergekühlte Miner und 0–10-V-Lüfter über Loxone. V0.2 entspricht funktional dem vom Anwender bestätigten Beta3-Stand.
+Stabile Version **V0.3.1 (0.3.1)** für Home Assistant. Eine lokale Steuerung für wassergekühlte Miner und 0–10-V-Lüfter über Loxone. V0.2 entspricht funktional dem vom Anwender bestätigten Beta3-Stand.
 
 ## Funktionen
 
@@ -25,7 +25,7 @@ Home Assistant Core **2026.10.1 oder neuer** und eine eingerichtete MQTT-Integra
 4. **Einstellungen → Geräte & Dienste → Integration hinzufügen → Michi´s Steuerung** öffnen und den Miner-Regler einrichten.
 5. Weitere Lüfter über **Gerät hinzufügen → 0-10V Lüftersteuerung Loxone** anlegen.
 
-Für ein Update in HACS **Informationen aktualisieren → Erneut herunterladen** wählen und Version **v0.3.0** installieren. Home Assistant vollständig neu starten; bei Bedarf Browser mit **⌘+Umschalt+R** neu laden. Bestehende Integration und Geräte behalten. Nach dem Neustart die gewünschten Automatiken wieder einschalten.
+Für ein Update in HACS **Informationen aktualisieren → Erneut herunterladen** wählen und Version **v0.3.1** installieren. Home Assistant vollständig neu starten; bei Bedarf Browser mit **⌘+Umschalt+R** neu laden. Bestehende Integration und Geräte behalten. Nach dem Neustart die gewünschten Automatiken wieder einschalten.
 
 Manuell: `custom_components/michis_steuerung` in das Home-Assistant-Konfigurationsverzeichnis kopieren und Home Assistant neu starten.
 
@@ -91,3 +91,7 @@ Beta4: 82 Backend-Tests bestanden, Browser-Vorschau auf Desktop und schmalem Bil
 ### Unabhängiger Legionellenschutz (V0.3)
 
 Der eigene Schiebeschalter wird mit Einstellungen speichern übernommen. Der Zeitplan arbeitet unabhängig vom oberen Normalautomatikschalter; Zieltemperatur, Wochentage, Zeitfenster und optionale Pumpe gelten unverändert. Bei ausgeschalteter Normalautomatik wird nach Ende des Zeitfensters ausgeschaltet. Die Sperrzeit bleibt vorrangig. Der gespeicherte aktivierte Legionellenplan bleibt nach einem HA-Neustart aktiv; die Normalautomatik startet aus. Fehler stoppen die Regelung bis zur bewussten erneuten Aktivierung bzw. Übernahme geprüfter Einstellungen.
+
+### Ventil-Rückmeldung (V0.3.1)
+
+Unter dem Miner-Ventil befindet sich „Ventil-Rückmeldung · PyLoxone“. Entitäts-ID und Wertebereich (0–10 V oder 0–100 %) einstellen und separat speichern. Vorbelegt ist sensor.miningraum_grundwasser_3wege mit 0–10 V. Leere ID deaktiviert die Rückmeldung. Der gemeldete Wert erscheint zusätzlich zum gesendeten Stellsignal; eine gemessene Ventilposition ist das nur bei einem entsprechenden Positionssensor. Die Rückmeldung beeinflusst die Regelung nicht.
