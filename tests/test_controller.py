@@ -68,6 +68,33 @@ class Tests(unittest.IsolatedAsyncioTestCase):
         return payload.decode()
     async def test_start_is_off_and_no_command(self):
         self.assertFalse(self.c.enabled);self.assertIsNone(self.c.last_message);self.assertEqual(len(callbacks),20)
+    async def test_valve_feedback_configuration_and_restore(self):
+        await self.c.command('valve_feedback',{'entity_id':'sensor.ventil','unit':'V'})
+        self.assertEqual(self.c.store.data['valve_feedback'],{'entity_id':'sensor.ventil','unit':'V'})
+        other=backend.Controller(self.c.hass,self.c.entry);other.store=self.c.store
+        await other.start()
+        self.assertEqual(other.valve_feedback,self.c.valve_feedback)
+        await other.stop()
+    async def test_valve_feedback_reads_zero_unknown_and_percent(self):
+        states={'sensor.ventil':types.SimpleNamespace(state='0',attributes={})}
+        self.c.hass.states=types.SimpleNamespace(get=states.get)
+        await self.c.command('valve_feedback',{'entity_id':'sensor.ventil','unit':'V'})
+        self.assertEqual(self.c.snapshot()['valve_feedback']['value'],0)
+        for value in ['unavailable','unknown','nan','12']:
+            states['sensor.ventil'].state=value
+            self.assertIsNone(self.c.snapshot()['valve_feedback']['value'])
+        await self.c.command('valve_feedback',{'entity_id':'sensor.ventil','unit':'%'})
+        states['sensor.ventil'].state='43'
+        self.assertEqual(self.c.snapshot()['valve_feedback']['value'],43)
+        self.assertEqual(self.sent,[])
+    async def test_valve_feedback_rejects_bad_id_and_can_disable(self):
+        for config in [{'entity_id':'sensor.bad id','unit':'V'},{'entity_id':'switch.test','unit':'V'},{'entity_id':'sensor.test','unit':'A'}]:
+            with self.assertRaises(ValueError):await self.c.command('valve_feedback',config)
+        await self.c.command('valve_feedback',{'entity_id':'sensor.missing','unit':'V'})
+        self.assertEqual(self.c.snapshot()['valve_feedback']['status'],'Entität nicht gefunden')
+        await self.c.command('valve_feedback',{'entity_id':'','unit':'V'})
+        self.assertEqual(self.c.snapshot()['valve_feedback']['status'],'Nicht eingerichtet')
+
     async def test_retained_does_not_enable(self):
         for receive in callbacks.values():receive(types.SimpleNamespace(payload='44',retain=True))
         self.assertFalse(self.c.snapshot()['ready'])
